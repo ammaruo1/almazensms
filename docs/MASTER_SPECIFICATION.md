@@ -6,6 +6,19 @@
 **Date:** 2026-11-10\
 **Status:** Authoritative project handoff document
 
+## Scope decision (2026-11-12)
+
+The original specification below is kept. The owner changed the current scope on 2026-11-12:
+
+- The current Hostinger plan is accepted. Persistence and queues use MariaDB and Laravel Database Queue. MySQL 8 and Redis are not required on that hosting.
+- Quotas are set per API key from the admin website. A project daily ceiling remains only as an extra guard.
+- OTP is part of the product and stays disabled until an administrator enables it.
+- SaaS, billing, payments, and a commercial multi-customer product are removed from the current scope. Phase 8 below is historical text, not planned work.
+- The 72-hour run, real boot test, and network-outage test are deferred to the end of the project.
+- Backups, alerts, and carrier-terms review are out of the current scope.
+
+Where the older text desires SaaS, requires Redis, or treats OTP as unstarted, this decision is the current scope.
+
 ------------------------------------------------------------------------
 
 ## 1. Mission
@@ -415,7 +428,7 @@ database credentials. No API source or secret has been uploaded yet.
     compliance review. **Exit gate:** production readiness checklist
     signed off by owner.
 
-### Phase 8 --- SaaS expansion (not part of initial MVP)
+### Phase 8 --- SaaS expansion (historical text; removed from current scope on 2026-11-12)
 
 -   Multi-tenant isolation, billing, quotas, additional
     gateways/providers, customer onboarding, and commercial operations.

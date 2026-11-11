@@ -296,12 +296,25 @@ class DashboardController extends Controller
         try {
             DB::connection()->getPdo();
             $database = 'متصل';
-            $version = (string) (DB::scalar('select version()') ?? '');
-            $engine = str_contains($version, 'MariaDB') ? 'MariaDB' : (str_contains(strtolower($version), 'mysql') ? 'MySQL' : DB::connection()->getDriverName());
         } catch (Throwable) {
             $database = 'تعذر الاتصال';
-            $version = '';
-            $engine = 'غير معروف';
+        }
+
+        $version = '';
+        $engine = 'غير معروف';
+        if ($database === 'متصل') {
+            try {
+                $version = (string) DB::scalar('select version()');
+            } catch (Throwable) {
+                try {
+                    $version = (string) DB::scalar('select sqlite_version()');
+                } catch (Throwable) {
+                    $version = '';
+                }
+            }
+            $engine = str_contains($version, 'MariaDB')
+                ? 'MariaDB'
+                : (str_contains(strtolower($version), 'mysql') ? 'MySQL' : DB::connection()->getDriverName());
         }
 
         $pendingJobs = null;

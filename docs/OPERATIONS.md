@@ -47,7 +47,7 @@ The local/manual workflow remains available. A 72-hour observation is pending in
 3. Select **تفعيل استقبال طلبات API** only after confirming expected costs and quotas. The app requests `SEND_SMS` through Android and requires a separate user confirmation. If denied or revoked, new remote sends stop; results already recorded locally remain available for reporting.
 4. Pause to stop new claims while allowing pending result reporting, or disconnect to cancel work and remove the device token from this phone. Replacing the token requires the backend's current device credential.
 
-The project limit defaults to 20 messages per UTC day; the backend accepts at most 10 requests/minute per project key, and the app enforces a minimum one-minute gap between remote sends. The server quota can be set as high as 1000/day, so keep it low until carrier terms, costs, and measured capacity are known. WorkManager uses Android's minimum 15-minute periodic interval and may run later because of Doze, battery policy, OEM management, force-stop, no network, or system scheduling. `SENT` is only a device/network handoff report. `UNKNOWN` is not retried automatically.
+The server enforces each API key's daily limit and per-minute limit. The phone does not display a fixed quota. It still waits at least one minute between remote sends; that wait is local pacing. The project daily ceiling is an extra shared guard, and the effective remaining amount is the smaller of the key remainder and the ceiling remainder. New keys start at 20 per UTC day and 10 new accepts per minute until an administrator changes them. Carrier-terms review is out of the current scope. WorkManager uses Android's minimum 15-minute periodic interval and may run later. `SENT` is only a device/network handoff report. `UNKNOWN` is not retried automatically.
 
 The app does not run an always-on foreground service. This avoids unsupported 24/7 claims and time-limited foreground-service behavior on Android 15+; WorkManager is the deferred-work path. This remains a best-effort gateway, not an uptime/SLA commitment.
 
@@ -68,19 +68,19 @@ Backend automated tests use SQLite `:memory:` and queue fakes. Use `php artisan 
 
 - API keys authenticate a project, not an individual end recipient. Apply customer authorization, carrier policy, quotas and abuse controls before exposing keys to external clients.
 - A message request persists encrypted recipient/body content. Define access controls, key rotation and retention/deletion policy for `APP_KEY` and personal data before production. Loss of `APP_KEY` makes encrypted message payloads unreadable.
-- The transactional outbox stores an event in the same SQL commit as the message. The scheduler publishes due events to Redis with a lease; expired leases are recoverable. The Android claim API reads committed SQL directly. Queue publication/processing does not mean an SMS was transmitted.
+- The transactional outbox stores an event in the same SQL commit as the message. The scheduler publishes due events to Laravel Database Queue with a lease; expired leases are recoverable. Redis is not required for the selected Hostinger deployment. The Android claim API reads committed SQL directly. Queue publication/processing does not mean an SMS was transmitted.
 - `sent_to_network` means only device-reported handoff. `delivery_reported` requires separate evidence. `unknown` is unresolved and never automatically resent.
 - In production, all `/api/v1` routes require HTTPS. Correct recognition of HTTPS forwarded by a proxy depends on narrowly configuring Laravel's trusted proxies. Do not trust arbitrary forwarded headers.
 
-The Hostinger account inspected for the owner is a shared website environment, not a verified runtime for the current API topology. It reports a PHP 8.3 CLI and required extensions but no Docker or local Redis service; its existing web root belongs to the shop. Do not deploy the Laravel source into that public root or run the shop's deployment BAT for this app. Use a separate VPS/API subdomain for the chosen MySQL 8 + Redis topology, or obtain explicit approval before redesigning to shared-host services.
+On 2026-11-12 the owner accepted the current Hostinger plan. Use MariaDB and Laravel Database Queue. Do not require MySQL 8 or Redis. Do not deploy the Laravel source into the shop's public root or run the shop deployment BAT. The 2026-11-12 code was not published to the server.
 
-There is no automated restore procedure, API host/domain/TLS setup, monitoring/alerting, retention enforcement, or live MySQL/Redis verification for the API. These remain deployment-readiness items, not verified features.
+Backups, alerts, and carrier-terms review are out of the current scope. There is no automated restore procedure and no live database verification in this workspace. Scheduler status is unconfirmed until a real `schedule:run` writes the heartbeat row.
 
 ## Dashboard administration (Phase 5)
 
 After applying database migrations and building frontend assets, visit `/login` on the HTTPS dashboard origin and sign in with an active administrator provisioned using `php artisan dashboard:admin`. The route `/` redirects to `/admin`. The dashboard is admin-only; operator users are denied web-dashboard access. Use Projects and quotas to create/disable projects, Devices to enroll/revoke a gateway, and API Keys to issue/revoke a project credential. Credentials appear only in the immediate creation response; copy them to an approved password manager/secret store before navigating away. A lost key/device token must be revoked and replaced.
 
-Review Messages for state and UUID only, Usage for the daily project quota, Audit for administrative actions, and Diagnostics for current service/device snapshot. `unknown` is intentionally not actionable for automatic resend. A diagnostic page is not monitoring or an alert. No admin send-SMS action, OTP workflow, or customer self-service is included.
+Review Messages for state and UUID only, Usage for the project ceiling and each key's effective remaining quota, API Keys to create and edit per-key limits, OTP to enable the feature and inspect masked challenges, Audit for administrative actions, and Diagnostics for the queue connection, pending jobs, pending outbox rows, failed jobs, and scheduler heartbeat. `unknown` is intentionally not actionable for automatic resend. A diagnostic page is not an alert. Backups and alerts are out of the current scope. There is no admin action that sends an SMS. OTP stays off until an administrator enables it, and the OTP page does not show the code, the full phone number, or the message text. SaaS and customer self-service billing are out of the current scope.
 
 ## Hostinger shared-plan deployment (selected, not yet deployed)
 
@@ -97,4 +97,4 @@ In Hostinger hPanel → Cron Jobs, schedule both entries every minute (Hostinger
 /opt/alt/php83/usr/bin/php /home/u893896051/apps/almazen-sms-api/artisan queue:work database --queue=outbox --stop-when-empty --max-time=45 --timeout=30 --tries=3 --no-interaction
 ```
 
-The shared plan does not provide a confirmed always-running worker. Verify Cron task limits, PHP-FPM version, database version, TLS certificate, `/up`, dashboard login, database queue processing, and backup/recovery before enabling any Android gateway. Do not describe cron-driven polling as a continuous worker or a 24/7 guarantee.
+The shared plan does not provide a confirmed always-running worker. Cron on Hostinger is not confirmed by this repository. Diagnostics stay "unconfirmed" for the scheduler until `scheduler:heartbeat` has actually run. Do not describe cron-driven polling as a continuous worker or a 24/7 guarantee. Backup and recovery are out of the current scope.

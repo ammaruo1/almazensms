@@ -14,9 +14,10 @@ class OtpService
     public function __construct(private MessageIntake $intake) {}
 
     /**
-     * Create an OTP challenge only after the existing message path accepts the SMS.
-     * The plaintext code is never returned, logged, or stored. The message body is
-     * the same encrypted payload the gateway already claims.
+     * Create an OTP challenge only in the same transaction as an accepted message.
+     * The challenge stores a hash. The plaintext code is not returned by the OTP
+     * endpoints, not shown in admin, and not written to logs. The existing encrypted
+     * message body still carries it so the gateway can send the SMS.
      *
      * @return array{challenge: OtpChallenge, duplicate: bool}
      */
@@ -97,7 +98,7 @@ class OtpService
             return ['challenge' => $replay, 'duplicate' => true];
         }
 
-        abort_unless($created instanceof OtpChallenge, 500, 'OTP challenge was not recorded.');
+        abort_unless($created instanceof OtpChallenge && $created->message_id === $message->id, 500, 'OTP challenge was not recorded.');
 
         return ['challenge' => $created, 'duplicate' => false];
     }

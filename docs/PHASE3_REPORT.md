@@ -1,7 +1,9 @@
 # Phase 3 — Backend Foundation Report
 
 **Date:** 2026-11-11  
-**Status:** Implemented and locally verified; production infrastructure verification remains pending. Phase 4 has not started.
+**Status:** Historical report of the Phase 3 delivery. Production infrastructure verification was pending when this report was written.
+
+**Later note (2026-11-12):** Dashboard, per-API-key quotas, disabled-by-default OTP, and the MariaDB / Laravel Database Queue choice were added locally after this report. The sentences below that say Phase 4 had not started, and that no dashboard or OTP existed, were true for the Phase 3 gate. They are not the current scope. This report did not send SMS, and the 2026-11-12 work did not send SMS either. Do not read the later local work as a live Hostinger deployment.
 
 ## Scope and outcome
 

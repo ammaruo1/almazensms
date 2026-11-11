@@ -1,7 +1,9 @@
 # Phase 4 — Android/API Gateway Integration Report
 
 **Date:** 2026-11-11  
-**Scope:** Continue toward operational readiness after owner approved automatic API-originated sends subject to configured limits/safeguards. No Dashboard, OTP, or Phase 5 work was started.
+**Scope:** Continue toward operational readiness after owner approved automatic API-originated sends subject to configured limits/safeguards. No Dashboard, OTP, or Phase 5 work was started during Phase 4.
+
+**Later note (2026-11-12):** The owner accepted the current Hostinger plan with MariaDB and Laravel Database Queue. Per-key quotas and a disabled-by-default OTP flow were added locally after this report, and the Phase 5 dashboard already existed locally by then. This report's record stands: Phase 4 did not send SMS, and live Android-to-backend traffic was not completed in that phase. The owner's earlier confirmed Phase 1 Yemen Mobile delivery remains a separate, earlier fact. Nothing in the 2026-11-12 work was published to Hostinger.
 
 ## Implementation
 

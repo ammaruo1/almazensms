@@ -4,7 +4,9 @@
 
 **Version:** 2.0\
 **Date:** 2026-11-10\
-**Status:** Authoritative project handoff document
+**Status:** Original handoff document, retained
+
+> **Scope change 2026-11-12:** This file is not deleted. Current scope is MariaDB and Laravel Database Queue on the accepted Hostinger plan, per-API-key quotas, and OTP disabled until an administrator enables it. SaaS, billing, and commercial multi-customer work are out of the current product. The 72-hour, real-boot, and network-outage tests are deferred to the end of the project. Backups, alerts, and carrier-terms review are out of the current scope. See `docs/DECISIONS.md`.
 
 ------------------------------------------------------------------------
 
@@ -390,7 +392,7 @@ device, time window, and limitations.
     compliance review. **Exit gate:** production readiness checklist
     signed off by owner.
 
-### Phase 8 --- SaaS expansion (not part of initial MVP)
+### Phase 8 --- SaaS expansion (historical text; removed from current scope on 2026-11-12)
 
 -   Multi-tenant isolation, billing, quotas, additional
     gateways/providers, customer onboarding, and commercial operations.

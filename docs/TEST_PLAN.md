@@ -1,5 +1,30 @@
 # Test Plan and Phase Results
 
+## Deferred and out of scope (2026-11-12)
+
+The owner deferred these checks to the end of the project. The procedures stay in this file and in `docs/PHASE2_72H_LOG.md`. They were not run in the 2026-11-12 change and are not passes:
+
+- 72-hour stability observation
+- physical boot recovery on the Samsung
+- network interruption and reconnection
+
+Out of the current scope, and not implemented: backups and restore, alerting, carrier-terms review, SaaS, billing, payments, and a commercial multi-customer product.
+
+## Local tests added on 2026-11-12
+
+Feature and unit tests were added or updated for per-key quotas, idempotent replay, OTP, admin quota/OTP pages, and database-queue diagnostics. They were **not run**. Do not treat this paragraph as a pass. Earlier pass counts below are historical results from the dates in those sections.
+
+### Android API 29+ background execution (added, not run this round)
+
+| Suite | Files | Coverage intent |
+| --- | --- | --- |
+| JVM unit | `app/src/test/.../BackgroundExecutionPolicyTest.kt` (parameterized API 26, 29, 30, 31, 33, 34, 35, 36, 37), `BackgroundExecutionPolicyMinSdkTest.kt` | WorkManager-first strategy, no always-on FGS, expedited work from API 31, FGS/notification rules, operational limits text |
+| Device | `app/src/androidTest/.../GatewayWorkSchedulerApiTest.kt`, `GatewayRecoveryCoordinatorTest.kt` | `enqueueNow` on API 29+ images, recovery coordinator behavior on the connected device |
+
+Run at project end: `.\gradlew.bat testDebugUnitTest` and, with an API 29 emulator or the physical API 37 device, `.\gradlew.bat connectedDebugAndroidTest`.
+
+## Phase 1 result
+
 ## Phase 1 result
 
 The owner reports one real SMS sent from ALMAZEN SMS through Yemen Mobile and received by the intended handset. Phase 1 is accepted as complete by the owner. No recipient number or message text is retained here. This is owner-confirmed receipt; a device/carrier delivery-report callback was not recorded.
@@ -47,7 +72,7 @@ Phase 0 build, lint, local tests, and instrumentation passed before Phase 1; ori
 
 Phase 3 results, exact PHP/Composer versions, failure/fix history, Docker limitation, and all executed commands are recorded in `docs/PHASE3_REPORT.md`. Final `artisan test --compact` result: 16 tests, 84 assertions, all passed. This includes actual `MessageStatus` unit tests and feature tests using SQLite in-memory plus queue fakes. Coverage includes operator authentication/disabled users, admin user management, project ownership, one-time hash-only keys, revoked key rejection, encrypted message fields, idempotency and conflict, atomic initial event/outbox creation, device heartbeat/claim/ack/status, invalid lifecycle transitions, production HTTP rejection, and idempotent outbox processing. No SMS was sent.
 
-Pending infrastructure checks (not represented as passes): boot MySQL 8.4 and Redis 7 from Compose; run migrations and feature tests against MySQL; verify concurrent claims/transaction rollback and Redis queue behavior under broker interruption/restart; exercise HTTPS through the selected production reverse proxy; deploy and observe actual Android heartbeat/claim integration only in Phase 4.
+Historical pending checks from the Phase 3 write-up, not passes: Compose MySQL/Redis were not booted, and live proxy/Android integration was not run. On 2026-11-12 the production target changed to MariaDB and Laravel Database Queue. Those services were not exercised on Hostinger in this change.
 
 ## Phase 5 dashboard checks (2026-11-11)
 
@@ -73,4 +98,4 @@ Final command: `.\gradlew.bat build lint testDebugUnitTest connectedDebugAndroid
 
 Backend portable checks were rerun with PHP 8.3.36: `php artisan test --compact` passed 17 tests/93 assertions and `vendor/bin/pint --test` passed. These use the existing SQLite in-memory test config and do not verify production MySQL/Redis. Docker could not connect to `dockerDesktopLinuxEngine`; therefore no live deployment, server-to-phone HTTP integration, or end-to-end SMS request was run. No real SMS was sent.
 
-Still pending: 72-hour stability observation, physical reboot and Internet reconnect validation, MySQL/Redis-backed tests, deployed HTTPS heartbeat/claim/ack/report, signed APK and chosen distribution. Google Play submission is blocked pending eligibility as a default SMS/Assistant handler for the manifest's `SEND_SMS` permission. Do not represent the generated unsigned APK or local API tests as production-upload readiness.
+Deferred on 2026-11-12 to the end of the project: 72-hour stability observation, physical reboot, and Internet reconnect validation. Still not production evidence: deployed HTTPS heartbeat/claim/ack/report, signed APK, and chosen distribution. MySQL 8 and Redis are no longer the required production services; MariaDB and Laravel Database Queue are the selected hosting path and were not exercised on Hostinger in this change. Google Play submission is blocked pending eligibility as a default SMS/Assistant handler for the manifest's `SEND_SMS` permission. Do not represent the generated unsigned APK or local API tests as production-upload readiness.

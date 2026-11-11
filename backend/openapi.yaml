@@ -1,11 +1,18 @@
 openapi: 3.1.0
 info:
   title: ALMAZEN SMS Gateway API
-  version: 1.0.0
+  version: 1.1.0
   description: >-
-    Phase 3 backend foundation. Message submission is persisted transactionally,
-    but this phase does not initiate SMS transmission. `sent_to_network` is not
-    proof of recipient delivery. Production deployments must use HTTPS.
+    ALMAZEN SMS API. Message submission is persisted transactionally with the
+    outbox. The selected hosting uses MariaDB and Laravel Database Queue; Redis
+    is not required. Each API key has a daily limit and a per-minute limit.
+    A project daily ceiling is an extra guard. Effective daily remaining is the
+    minimum of the key remainder and the project-ceiling remainder. Replaying
+    the same Idempotency-Key does not consume quota. OTP is disabled until an
+    administrator enables it for a project. OTP request and verify responses
+    never contain the code. This API does not itself transmit SMS.
+    `sent_to_network` is not proof of recipient delivery. Production requests
+    must use HTTPS.
 servers:
   - url: https://api.example.invalid/api/v1
     description: Placeholder only; no production host has been provisioned.
@@ -15,6 +22,7 @@ tags:
   - name: API keys
   - name: Devices
   - name: Messages
+  - name: OTP
 security: []
 paths:
   /auth/login:
@@ -102,7 +110,7 @@ paths:
               required: [name]
               properties:
                 name: { type: string, maxLength: 120 }
-                daily_message_limit: { type: integer, minimum: 1, maximum: 1000, default: 20, description: Maximum requests accepted by this project per UTC day. }
+                daily_message_limit: { type: integer, minimum: 1, maximum: 1000, default: 20, description: Project-wide daily ceiling shared by every API key. The effective key quota is the minimum of this ceiling's remainder and the key's own daily remainder. Per-key limits are edited in the admin website. }
       responses:
         '201': { description: Project created and audited. }
   /projects/{projectId}:
@@ -130,7 +138,7 @@ paths:
               properties:
                 name: { type: string, maxLength: 80 }
       responses:
-        '201': { description: Secret is returned once, with Cache-Control no-store; only SHA-256 hash is stored. }
+        '201': { description: Secret is returned once, with Cache-Control no-store; only SHA-256 hash is stored. A new key starts at 20 messages per UTC day and 10 new accepts per rolling minute. Change those limits from the admin website, not from this call. }
         '404': { description: Project not owned by the operator. }
   /projects/{projectId}/api-keys/{apiKeyId}:
     delete:
@@ -186,9 +194,12 @@ paths:
       summary: Persist a message request for the gateway queue
       description: >-
         Requires a project API key and an idempotency key. Same key and same
-        payload returns the original message; same key with a different payload
-        returns 409. The message and outbox event commit in one MySQL transaction.
-        This endpoint does not send an SMS.
+        payload returns the original message and does not consume quota; same
+        key with a different payload returns 409. The quota reservation, message,
+        lifecycle event, and outbox event commit in one database transaction.
+        Daily acceptance requires remaining key quota and remaining project
+        ceiling. The per-minute limit counts only newly accepted messages for
+        that key. This endpoint does not send an SMS.
       security: [{ projectApiKey: [] }]
       parameters:
         - name: Idempotency-Key
@@ -210,7 +221,65 @@ paths:
         '200': { description: Idempotent duplicate; original message returned. }
         '409': { description: Idempotency key reused with a different payload. }
         '422': { description: Validation error or missing/invalid idempotency key. }
-        '429': { description: Rate limit exceeded. }
+        '429': { description: API key daily quota, project daily ceiling, or API key per-minute limit reached. Idempotent replays do not return 429 for quota. }
+  /otp/request:
+    post:
+      tags: [OTP]
+      summary: Request an OTP SMS through the normal message path
+      description: >-
+        OTP must already be enabled for the project in the admin panel; otherwise
+        the call returns 403 and writes nothing. The code is generated on the
+        server, stored only as an HMAC, and is not present in this response.
+        The SMS is the normal queued message. The request consumes the API key
+        quota. A replay with the same Idempotency-Key and same phone/purpose
+        returns the original challenge and does not consume quota again.
+      security: [{ projectApiKey: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, pattern: '^\+[1-9][0-9]{7,14}$' }
+                purpose: { type: string, maxLength: 32, default: "login", pattern: '^[A-Za-z0-9_.:-]+$' }
+      responses:
+        '202': { description: Challenge and message accepted. Response has challenge id, status, purpose, expiry, and message id. It has no code and no phone. }
+        '200': { description: Idempotent replay. No additional quota is consumed and the code is not returned. }
+        '403': { description: OTP is disabled for this project. }
+        '409': { description: Idempotency key reused for a different phone or purpose. }
+        '422': { description: Validation failed. }
+        '429': { description: Quota exhausted or resend cooldown is active. Nothing new is stored. }
+  /otp/verify:
+    post:
+      tags: [OTP]
+      summary: Verify an OTP code
+      description: >-
+        Checks the HMAC of the submitted code against the latest pending
+        challenge for this project, phone, and purpose. Applies expiry and the
+        attempt limit. Does not consume message quota and does not echo the code.
+      security: [{ projectApiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, code]
+              properties:
+                to: { type: string, pattern: '^\+[1-9][0-9]{7,14}$' }
+                code: { type: string, pattern: '^[0-9]{6}$' }
+                purpose: { type: string, maxLength: 32, default: "login" }
+      responses:
+        '200': { description: verified true and status verified. The code is not returned. }
+        '403': { description: OTP is disabled for this project. }
+        '422': { description: Verification failed. data.status is invalid, expired, or exhausted. The submitted code is not returned. }
   /messages/{messageId}:
     get:
       tags: [Messages]

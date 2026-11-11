@@ -12,7 +12,7 @@
 
 ## Run record
 
-Status: **RUNNING — follow-up observations pending**. Baseline began after final APK install and reboot check.
+Status: **DEFERRED on 2026-11-12 until the end of the project**. The baseline below is unchanged. This is not a completed 72-hour result. The real boot test and the network-outage test are deferred with it.
 
 Device: Samsung `SM-S928U`, Android 17/API 37 (observed previously; re-confirm at start).
 

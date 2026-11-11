@@ -1,5 +1,17 @@
 # ALMAZEN SMS Architecture
 
+## Current product (2026-11-12)
+
+The accepted deployment is the current Hostinger plan: MariaDB through Laravel's `mysql` driver, and Laravel Database Queue. Redis is not required. The outbox and the message commit stay in one SQL transaction; the scheduler publishes due outbox rows to the database queue. Diagnostics name that connection `Database Queue` and do not treat a missing Redis service as a fault. Scheduler status is unconfirmed until `scheduler:heartbeat` writes a last-run row. Defining the schedule in Laravel does not prove Hostinger cron is configured.
+
+Each API key has a UTC daily limit and a rolling per-minute limit, edited on the admin website. Effective daily remaining is the minimum of the key's remaining messages and the project's remaining daily ceiling. The ceiling stays so every key on a project shares one budget. Idempotent replays do not consume either counter. Android tells the operator that the server enforces the key quota and does not display a fixed numeric quota.
+
+OTP is per project and disabled by default. Only an administrator can enable it. Request and verify are API endpoints. The code is hashed, and the SMS uses the existing message path inside the same transaction as the challenge. The admin OTP page shows a masked phone and status, not the code, the full number, or the message text.
+
+SaaS, billing, payments, and a commercial multi-customer product are out of the current scope. Backups, alerts, and carrier-terms review are out of the current scope. The 72-hour, real-boot, and network-outage tests are deferred to the end of the project.
+
+The sections below keep the phase history. Present-tense claims in those sections that require Redis, exclude OTP, or treat SaaS as current work are superseded by this section.
+
 ## Phase 2 scope
 
 The existing `:app` Android application provides a local, manually operated SMS proof of concept. Phase 2 adds durable attempt event history, process/boot recovery to `UNKNOWN`, foreground network-change monitoring, battery/charging diagnostics, and database upgrade coverage. It still has no backend queue, dashboard, OTP flow, inbound SMS receiver, or background sending service. All SMS transmission remains initiated from the review-and-confirm screen by the user.

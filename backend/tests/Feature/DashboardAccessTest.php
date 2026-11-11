@@ -108,7 +108,11 @@ class DashboardAccessTest extends TestCase
         $admin->forceFill(['role' => 'admin'])->save();
         $project = Project::query()->create(['owner_id' => $admin->id, 'name' => 'Private Project']);
 
-        $keyResponse = $this->actingAs($admin, 'web')->post(route('admin.keys.store', $project), ['name' => 'production']);
+        $keyResponse = $this->actingAs($admin, 'web')->post(route('admin.keys.store', $project), [
+            'name' => 'production',
+            'daily_message_limit' => 20,
+            'requests_per_minute' => 10,
+        ]);
         $keyResponse->assertCreated()->assertHeader('Cache-Control', 'no-store, private')->assertHeader('Referrer-Policy', 'no-referrer');
         $secret = ApiKey::query()->firstOrFail();
         $this->assertSame(hash('sha256', (string) $keyResponse->viewData('credential')), $secret->key_hash);
@@ -171,7 +175,7 @@ class DashboardAccessTest extends TestCase
         $admin->forceFill(['role' => 'admin'])->save();
         $this->actingAs($admin, 'web');
 
-        foreach (['admin.index', 'admin.projects', 'admin.users', 'admin.devices', 'admin.keys', 'admin.messages', 'admin.usage', 'admin.audit', 'admin.diagnostics'] as $routeName) {
+        foreach (['admin.index', 'admin.projects', 'admin.users', 'admin.devices', 'admin.keys', 'admin.messages', 'admin.usage', 'admin.otp', 'admin.audit', 'admin.diagnostics'] as $routeName) {
             $this->get(route($routeName))->assertOk();
         }
     }
