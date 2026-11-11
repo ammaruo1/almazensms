@@ -1,13 +1,16 @@
 package com.almazen.sms.worker
 
 import android.content.Context
+import android.os.Build
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.almazen.sms.domain.BackgroundExecutionPolicy
 import java.util.concurrent.TimeUnit
 
 object GatewayWorkScheduler {
@@ -20,7 +23,10 @@ object GatewayWorkScheduler {
         workManager.enqueueUniquePeriodicWork(
             PERIODIC_WORK,
             ExistingPeriodicWorkPolicy.UPDATE,
-            PeriodicWorkRequestBuilder<GatewaySyncWorker>(15, TimeUnit.MINUTES)
+            PeriodicWorkRequestBuilder<GatewaySyncWorker>(
+                BackgroundExecutionPolicy.minimumPeriodicIntervalMinutes(Build.VERSION.SDK_INT).toLong(),
+                TimeUnit.MINUTES
+            )
                 .setConstraints(networkConstraint())
                 .build()
         )
@@ -28,9 +34,12 @@ object GatewayWorkScheduler {
     }
 
     fun enqueueNow(context: Context) {
-        val request = OneTimeWorkRequestBuilder<GatewaySyncWorker>()
+        val builder = OneTimeWorkRequestBuilder<GatewaySyncWorker>()
             .setConstraints(networkConstraint())
-            .build()
+        if (BackgroundExecutionPolicy.canRequestExpeditedWork(Build.VERSION.SDK_INT)) {
+            builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+        }
+        val request = builder.build()
         WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(IMMEDIATE_WORK, ExistingWorkPolicy.KEEP, request)
     }
 

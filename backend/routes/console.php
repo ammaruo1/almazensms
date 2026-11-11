@@ -9,4 +9,5 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('outbox:dispatch --limit=100')->everyMinute()->withoutOverlapping();
+Schedule::command('scheduler:heartbeat')->everyMinute()->withoutOverlapping();
 Schedule::command('sanctum:prune-expired --hours=24')->daily()->withoutOverlapping();

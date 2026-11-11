@@ -3,7 +3,8 @@
         <section class="h-fit rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 class="font-bold">مشروع جديد</h2><form method="POST" action="{{ route('admin.projects.store') }}" class="mt-5 space-y-4">@csrf
             <label class="block text-sm font-medium">اسم المشروع<input name="name" required maxlength="120" class="form-control"></label>
             <label class="block text-sm font-medium">المالك<select name="owner_id" required class="form-control">@foreach ($owners as $owner)<option value="{{ $owner->id }}">{{ $owner->name }} · {{ $owner->email }}</option>@endforeach</select></label>
-            <label class="block text-sm font-medium">حد الرسائل اليومي<input name="daily_message_limit" type="number" min="1" max="1000" value="20" required class="form-control"></label>
+            <label class="block text-sm font-medium">سقف المشروع اليومي<input name="daily_message_limit" type="number" min="1" max="1000" value="20" required class="form-control"></label>
+            <p class="text-xs leading-5 text-slate-500">حد إضافي لكل مفاتيح المشروع. الحصة الفعالة لمفتاح API هي الأقل بين حد المفتاح ومتبقي هذا السقف.</p>
             <button class="button-primary">إنشاء المشروع</button>
         </form></section>
         <section class="space-y-4">@forelse ($projects as $project)
@@ -12,7 +13,7 @@
                 <form method="POST" action="{{ route('admin.projects.update', $project) }}" class="mt-5 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2">@csrf @method('PATCH')
                     <input name="name" value="{{ $project->name }}" required class="form-control" aria-label="اسم المشروع">
                     <select name="owner_id" required class="form-control" aria-label="المالك">@foreach ($owners as $owner)<option value="{{ $owner->id }}" @selected($project->owner_id === $owner->id)>{{ $owner->name }}</option>@endforeach</select>
-                    <input name="daily_message_limit" type="number" min="1" max="1000" value="{{ $project->daily_message_limit }}" required class="form-control" aria-label="حد الرسائل اليومي">
+                    <input name="daily_message_limit" type="number" min="1" max="1000" value="{{ $project->daily_message_limit }}" required class="form-control" aria-label="سقف المشروع اليومي">
                     <select name="status" class="form-control" aria-label="حالة المشروع"><option value="active" @selected($project->status === 'active')>نشط</option><option value="paused" @selected($project->status === 'paused')>متوقف</option></select>
                     <button class="button-secondary sm:col-span-2">حفظ تعديلات المشروع والحصة</button>
                 </form>

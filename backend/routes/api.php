@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\DeviceController;
 use App\Http\Controllers\Api\V1\DeviceMessageController;
 use App\Http\Controllers\Api\V1\MessageController;
+use App\Http\Controllers\Api\V1\OtpController;
 use App\Http\Controllers\Api\V1\ProjectController;
 use App\Http\Controllers\Api\V1\UserAdminController;
 use Illuminate\Support\Facades\Route;
@@ -27,9 +28,11 @@ Route::prefix('v1')->middleware('https.only')->group(function (): void {
         Route::delete('/projects/{project}/devices/{device}', [DeviceController::class, 'revoke']);
     });
 
-    Route::middleware(['api-key', 'throttle:messages'])->group(function (): void {
+    Route::middleware('api-key')->group(function (): void {
         Route::post('/messages', [MessageController::class, 'store']);
         Route::get('/messages/{messageId}', [MessageController::class, 'show']);
+        Route::post('/otp/request', [OtpController::class, 'store']);
+        Route::post('/otp/verify', [OtpController::class, 'verify']);
     });
 
     Route::prefix('devices')->middleware(['device.auth', 'throttle:devices'])->group(function (): void {

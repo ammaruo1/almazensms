@@ -102,7 +102,8 @@ class GatewayDiagnostics(private val context: Context) {
         val serviceState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             telephony.getServiceState(TelephonyManager.INCLUDE_LOCATION_DATA_NONE)
         } else {
-            return MobileServiceStatus.UNKNOWN
+            @Suppress("DEPRECATION")
+            telephony.serviceState
         }
         val state = serviceState?.state
         when (state) {

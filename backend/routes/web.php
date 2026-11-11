@@ -24,7 +24,10 @@ Route::middleware(['auth', 'role.admin'])->prefix('admin')->name('admin.')->grou
     Route::delete('/projects/{project}/devices/{device}', [DashboardController::class, 'revokeDevice'])->name('devices.revoke');
     Route::get('/keys', [DashboardController::class, 'keys'])->name('keys');
     Route::post('/projects/{project}/keys', [DashboardController::class, 'storeKey'])->name('keys.store');
+    Route::patch('/projects/{project}/keys/{apiKey}', [DashboardController::class, 'updateKeyQuota'])->name('keys.update');
     Route::delete('/projects/{project}/keys/{apiKey}', [DashboardController::class, 'revokeKey'])->name('keys.revoke');
+    Route::get('/otp', [DashboardController::class, 'otp'])->name('otp');
+    Route::patch('/projects/{project}/otp', [DashboardController::class, 'updateOtp'])->name('otp.update');
     Route::get('/messages', [DashboardController::class, 'messages'])->name('messages');
     Route::get('/usage', [DashboardController::class, 'usage'])->name('usage');
     Route::get('/audit', [DashboardController::class, 'audit'])->name('audit');

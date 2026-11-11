@@ -87,6 +87,7 @@ import com.almazen.sms.domain.shortLabel
 import com.almazen.sms.platform.AndroidSmsGateway
 import com.almazen.sms.platform.SmsSendRequest
 import com.almazen.sms.platform.SmsSendResult
+import com.almazen.sms.platform.GatewayRecoveryCoordinator
 import com.almazen.sms.platform.SmsSendCoordinator
 import com.almazen.sms.network.GatewayApiClient
 import com.almazen.sms.worker.GatewayWorkScheduler
@@ -202,7 +203,10 @@ private fun AlmazenSmsApp() {
         }
     }
 
-    LaunchedEffect(Unit) { refresh() }
+    LaunchedEffect(Unit) {
+        GatewayRecoveryCoordinator.reconcileOnAppStart(context.applicationContext)
+        refresh()
+    }
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
@@ -458,7 +462,7 @@ private fun AlmazenSmsApp() {
             onDismissRequest = { confirmAutomation = false },
             title = { Text("تفعيل استقبال رسائل API") },
             text = {
-                Text("بعد التفعيل، قد يرسل الهاتف تلقائيًا الرسائل التي يعتمدها مشروع الخادم باستخدام SIM المختارة. الحد الافتراضي للمشروع 20 رسالة يوميًا وبحد أقصى 10 طلبات في الدقيقة؛ قد تترتب رسوم اتصال. Android قد يؤخر الفحص، ولا يمكن ضمان التوقيت أو التشغيل المستمر.")
+                Text("بعد التفعيل، قد يرسل الهاتف تلقائيًا الرسائل التي يعتمدها الخادم باستخدام SIM المختارة. الخادم هو الذي يفرض حصة مفتاح API، وهذا التطبيق لا يعرض حدًا رقميًا قد يختلف عن إعداد الموقع. قد تترتب رسوم اتصال. Android قد يؤخر الفحص، ولا يمكن ضمان التوقيت أو التشغيل المستمر.")
             },
             confirmButton = { Button(onClick = { confirmAutomation = false; enableAutomaticGateway() }) { Text("أفهم وأفعّل") } },
             dismissButton = { TextButton(onClick = { confirmAutomation = false }) { Text("إلغاء") } }
@@ -570,7 +574,7 @@ private fun GatewayConnectionCard(
                 OutlinedButton(onClick = { showDisconnectDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("فصل الجهاز وحذف بيانات اعتماده") }
             }
             Text(
-                "WorkManager يفحص الطلبات كل 15 دقيقة على الأقل حسب جدولة Android، وقد يتأخر بسبب النظام أو الشبكة. حد المشروع الافتراضي 20 رسالة يوميًا، مع إرسال متسلسل بفاصل لا يقل عن دقيقة. هذا لا يضمن تشغيلًا دائمًا ولا وصول SMS.",
+                "WorkManager يفحص الطلبات كل 15 دقيقة على الأقل حسب جدولة Android، وقد يتأخر بسبب النظام أو الشبكة. الخادم يفرض حصة مفتاح API، ولا يُعرض هنا رقم حصة ثابت. الإرسال البعيد متسلسل بفاصل محلي لا يقل عن دقيقة. هذا لا يضمن تشغيلًا دائمًا ولا وصول SMS.",
                 color = BrandMuted,
                 style = MaterialTheme.typography.bodySmall
             )

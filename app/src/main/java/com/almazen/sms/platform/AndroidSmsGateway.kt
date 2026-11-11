@@ -135,14 +135,12 @@ class AndroidSmsGateway(private val context: Context) {
             .setData("almazen-sms://attempt/$attemptId/$partIndex/${action.substringAfterLast('.')}".toUri())
             .putExtra(EXTRA_ATTEMPT_ID, attemptId)
             .putExtra(EXTRA_PART_INDEX, partIndex)
-        return PendingIntent.getBroadcast(
-            context,
-            partIndex,
-            intent,
-            // SmsDispatcher fills in the delivery PDU and format at callback time.
-            // Keep the PendingIntent explicit and uniquely scoped while allowing those extras.
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        )
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        return PendingIntent.getBroadcast(context, partIndex, intent, flags)
     }
 
     companion object {

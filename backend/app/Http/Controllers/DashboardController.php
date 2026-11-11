@@ -7,9 +7,11 @@ use App\Models\ApiKey;
 use App\Models\AuditLog;
 use App\Models\Device;
 use App\Models\Message;
+use App\Models\OtpChallenge;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\AuditLogger;
+use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -17,6 +19,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
+use Throwable;
 
 class DashboardController extends Controller
 {
@@ -127,25 +130,70 @@ class DashboardController extends Controller
 
     public function keys(): View
     {
+        $today = now('UTC')->toDateString();
+
         return view('dashboard.keys', [
-            'keys' => ApiKey::query()->with('project:id,name')->orderByDesc('created_at')->paginate(25),
-            'projects' => Project::query()->where('status', 'active')->orderBy('name')->get(['id', 'name']),
+            'keys' => ApiKey::query()
+                ->with([
+                    'project:id,name,daily_message_limit',
+                    'project.dailyUsage' => fn ($query) => $query->whereDate('usage_date', $today),
+                    'dailyUsage' => fn ($query) => $query->whereDate('usage_date', $today),
+                ])
+                ->orderByDesc('created_at')
+                ->paginate(25),
+            'projects' => Project::query()->where('status', 'active')->orderBy('name')->get(['id', 'name', 'daily_message_limit']),
+            'today' => $today,
         ]);
     }
 
     public function storeKey(Request $request, Project $project, AuditLogger $audit): Response
     {
         abort_unless($project->status === 'active', 422, 'المشروع متوقف.');
-        $data = $request->validate(['name' => ['required', 'string', 'max:80']]);
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:80'],
+            'daily_message_limit' => ['required', 'integer', 'min:1', 'max:1000'],
+            'requests_per_minute' => ['required', 'integer', 'min:1', 'max:120'],
+        ]);
         $secret = 'azm_live_'.Str::random(48);
         $key = $project->apiKeys()->create([
             'name' => $data['name'],
             'prefix' => substr($secret, 0, 24),
             'key_hash' => hash('sha256', $secret),
+            'daily_message_limit' => $data['daily_message_limit'],
+            'requests_per_minute' => $data['requests_per_minute'],
         ]);
-        $audit->record($request->user()->id, $project->id, 'api_key.created', 'api_key', (string) $key->id, ['name' => $key->name, 'prefix' => $key->prefix]);
+        $audit->record($request->user()->id, $project->id, 'api_key.created', 'api_key', (string) $key->id, [
+            'name' => $key->name,
+            'prefix' => $key->prefix,
+            'daily_message_limit' => $key->daily_message_limit,
+            'requests_per_minute' => $key->requests_per_minute,
+        ]);
 
         return $this->credentialResponse($secret, 'مفتاح API', 'انسخ المفتاح الآن؛ لا يمكن استعادته بعد مغادرة هذه الصفحة.');
+    }
+
+    public function updateKeyQuota(Request $request, Project $project, ApiKey $apiKey, AuditLogger $audit): RedirectResponse
+    {
+        abort_unless($apiKey->project_id === $project->id, 404);
+        $data = $request->validate([
+            'daily_message_limit' => ['required', 'integer', 'min:1', 'max:1000'],
+            'requests_per_minute' => ['required', 'integer', 'min:1', 'max:120'],
+        ]);
+        $before = [
+            'daily_message_limit' => (int) $apiKey->daily_message_limit,
+            'requests_per_minute' => (int) $apiKey->requests_per_minute,
+        ];
+        $apiKey->update($data);
+        $audit->record($request->user()->id, $project->id, 'api_key.quota_updated', 'api_key', (string) $apiKey->id, [
+            'api_key_id' => $apiKey->id,
+            'before' => $before,
+            'after' => [
+                'daily_message_limit' => (int) $data['daily_message_limit'],
+                'requests_per_minute' => (int) $data['requests_per_minute'],
+            ],
+        ]);
+
+        return back()->with('status', 'تم تحديث حصة مفتاح API.');
     }
 
     public function revokeKey(Request $request, Project $project, ApiKey $apiKey, AuditLogger $audit): RedirectResponse
@@ -176,9 +224,53 @@ class DashboardController extends Controller
 
     public function usage(): View
     {
+        $today = now('UTC')->toDateString();
+
         return view('dashboard.usage', [
-            'projects' => Project::query()->with(['dailyUsage' => fn ($query) => $query->whereDate('usage_date', today())])->orderBy('name')->get(),
+            'today' => $today,
+            'projects' => Project::query()->with(['dailyUsage' => fn ($query) => $query->whereDate('usage_date', $today)])->orderBy('name')->get(),
+            'keys' => ApiKey::query()
+                ->with([
+                    'project:id,name,daily_message_limit',
+                    'project.dailyUsage' => fn ($query) => $query->whereDate('usage_date', $today),
+                    'dailyUsage' => fn ($query) => $query->whereDate('usage_date', $today),
+                ])
+                ->orderBy('project_id')
+                ->orderBy('id')
+                ->get(),
         ]);
+    }
+
+    public function otp(): View
+    {
+        return view('dashboard.otp', [
+            'projects' => Project::query()->orderBy('name')->get(),
+            'challenges' => OtpChallenge::query()->with('project:id,name')->latest()->paginate(40),
+        ]);
+    }
+
+    public function updateOtp(Request $request, Project $project, AuditLogger $audit): RedirectResponse
+    {
+        $data = $request->validate([
+            'otp_enabled' => ['required', 'boolean'],
+            'otp_ttl_seconds' => ['required', 'integer', 'min:60', 'max:1800'],
+            'otp_max_attempts' => ['required', 'integer', 'min:1', 'max:10'],
+            'otp_resend_cooldown_seconds' => ['required', 'integer', 'min:15', 'max:3600'],
+        ]);
+        $before = $project->only(['otp_enabled', 'otp_ttl_seconds', 'otp_max_attempts', 'otp_resend_cooldown_seconds']);
+        $after = [
+            'otp_enabled' => $request->boolean('otp_enabled'),
+            'otp_ttl_seconds' => (int) $data['otp_ttl_seconds'],
+            'otp_max_attempts' => (int) $data['otp_max_attempts'],
+            'otp_resend_cooldown_seconds' => (int) $data['otp_resend_cooldown_seconds'],
+        ];
+        $project->update($after);
+        $audit->record($request->user()->id, $project->id, 'otp.settings_updated', 'project', (string) $project->id, [
+            'before' => $before,
+            'after' => $after,
+        ]);
+
+        return back()->with('status', $after['otp_enabled'] ? 'تم حفظ إعدادات OTP وتفعيلها لهذا المشروع.' : 'تم حفظ إعدادات OTP. الخدمة متوقفة لهذا المشروع.');
     }
 
     public function audit(): View
@@ -188,34 +280,96 @@ class DashboardController extends Controller
 
     public function diagnostics(): View
     {
-        $queue = ['status' => 'غير مستخدم لهذا الاتصال', 'detail' => (string) config('queue.default')];
-        if (config('queue.default') === 'redis') {
-            try {
-                Redis::connection()->ping();
-                $queue = ['status' => 'متصل', 'detail' => 'اتصال Redis متاح'];
-            } catch (\Throwable) {
-                $queue = ['status' => 'غير متاح', 'detail' => 'تعذر التحقق من اتصال Redis'];
-            }
-        }
+        $connection = (string) config('queue.default');
+        $driver = (string) config("queue.connections.{$connection}.driver", $connection);
+        $queueLabel = match ($driver) {
+            'database' => 'Database Queue',
+            'redis' => 'Redis',
+            default => $driver,
+        };
+        $queueDetail = match ($driver) {
+            'database' => 'QUEUE_CONNECTION=database. الطابور جدول jobs في MariaDB أو MySQL عبر Laravel Database Queue.',
+            'redis' => $this->redisQueueDetail(),
+            default => 'اتصال الطابور الفعلي هو '.$driver.'.',
+        };
 
         try {
             DB::connection()->getPdo();
             $database = 'متصل';
-            $failedJobs = DB::table('failed_jobs')->count();
-            $pendingOutbox = DB::table('outbox_events')->whereNull('processed_at')->count();
-        } catch (\Throwable) {
-            $failedJobs = null;
-            $pendingOutbox = null;
+            $version = (string) (DB::scalar('select version()') ?? '');
+            $engine = str_contains($version, 'MariaDB') ? 'MariaDB' : (str_contains(strtolower($version), 'mysql') ? 'MySQL' : DB::connection()->getDriverName());
+        } catch (Throwable) {
             $database = 'تعذر الاتصال';
+            $version = '';
+            $engine = 'غير معروف';
+        }
+
+        $pendingJobs = null;
+        $oldestJob = null;
+        if ($driver === 'database') {
+            try {
+                $table = (string) config("queue.connections.{$connection}.table", 'jobs');
+                $pendingJobs = DB::table($table)->count();
+                $oldestCreated = DB::table($table)->min('created_at');
+                $oldestJob = is_numeric($oldestCreated) ? Carbon::createFromTimestampUTC((int) $oldestCreated)->toIso8601String() : null;
+            } catch (Throwable) {
+                $pendingJobs = null;
+                $oldestJob = null;
+            }
+        }
+
+        try {
+            $pendingOutbox = DB::table('outbox_events')->whereNull('processed_at')->count();
+            $oldestOutboxRaw = DB::table('outbox_events')->whereNull('processed_at')->orderBy('created_at')->value('created_at');
+            $oldestOutbox = $oldestOutboxRaw ? Carbon::parse($oldestOutboxRaw)->toIso8601String() : null;
+            $failedJobs = DB::table('failed_jobs')->count();
+            $oldestFailedRaw = DB::table('failed_jobs')->orderBy('failed_at')->value('failed_at');
+            $oldestFailed = $oldestFailedRaw ? Carbon::parse($oldestFailedRaw)->toIso8601String() : null;
+        } catch (Throwable) {
+            $pendingOutbox = null;
+            $oldestOutbox = null;
+            $failedJobs = null;
+            $oldestFailed = null;
+        }
+
+        try {
+            $heartbeat = DB::table('scheduler_heartbeats')->where('name', 'schedule')->value('last_ran_at');
+            $schedulerStatus = $heartbeat ? 'آخر تشغيل مسجّل' : 'غير مؤكد';
+            $schedulerDetail = $heartbeat
+                ? Carbon::parse($heartbeat)->toIso8601String().' — كتبه أمر scheduler:heartbeat عند تنفيذ الجدولة. هذا ليس إثباتًا أن Cron على Hostinger مضبوط.'
+                : 'غير مؤكد. تعريف الجدولة في Laravel لا يعني أن Cron يعمل.';
+        } catch (Throwable) {
+            $schedulerStatus = 'غير مؤكد';
+            $schedulerDetail = 'غير مؤكد. تعذر قراءة سجل نبض الجدولة.';
         }
 
         return view('dashboard.diagnostics', [
-            'queue' => $queue,
-            'failedJobs' => $failedJobs,
-            'pendingOutbox' => $pendingOutbox,
-            'staleDevices' => Device::query()->whereNull('revoked_at')->where(fn ($query) => $query->whereNull('last_heartbeat_at')->orWhere('last_heartbeat_at', '<', now()->subMinutes(5)))->count(),
             'database' => $database,
+            'engine' => $engine,
+            'databaseVersion' => $version,
+            'queueLabel' => $queueLabel,
+            'queueDetail' => $queueDetail,
+            'pendingJobs' => $pendingJobs,
+            'oldestJob' => $oldestJob,
+            'pendingOutbox' => $pendingOutbox,
+            'oldestOutbox' => $oldestOutbox,
+            'failedJobs' => $failedJobs,
+            'oldestFailed' => $oldestFailed,
+            'schedulerStatus' => $schedulerStatus,
+            'schedulerDetail' => $schedulerDetail,
+            'staleDevices' => Device::query()->whereNull('revoked_at')->where(fn ($query) => $query->whereNull('last_heartbeat_at')->orWhere('last_heartbeat_at', '<', now()->subMinutes(5)))->count(),
         ]);
+    }
+
+    private function redisQueueDetail(): string
+    {
+        try {
+            Redis::connection()->ping();
+
+            return 'اتصال الطابور هو Redis، والاستجابة نجحت.';
+        } catch (Throwable) {
+            return 'اتصال الطابور هو Redis، وتعذر التحقق منه.';
+        }
     }
 
     private function credentialResponse(string $credential, string $title, string $notice): Response

@@ -28,8 +28,9 @@ class ProcessOutboxEvent implements ShouldQueue
                 return;
             }
 
-            // This job confirms durable publication to Redis. The device claim endpoint
-            // reads the committed MySQL message row; sending remains Phase 4 work.
+            // This job confirms durable publication on the configured queue.
+            // Hostinger uses Laravel Database Queue. The device claim endpoint
+            // reads the committed message row; a processed job is not an SMS send.
             $event->forceFill(['processed_at' => now(), 'lease_expires_at' => null, 'last_error' => null])->save();
         }, attempts: 3);
     }
