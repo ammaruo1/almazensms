@@ -1,0 +1,321 @@
+openapi: 3.1.0
+info:
+  title: ALMAZEN SMS Gateway API
+  version: 1.0.0
+  description: >-
+    Phase 3 backend foundation. Message submission is persisted transactionally,
+    but this phase does not initiate SMS transmission. `sent_to_network` is not
+    proof of recipient delivery. Production deployments must use HTTPS.
+servers:
+  - url: https://api.example.invalid/api/v1
+    description: Placeholder only; no production host has been provisioned.
+tags:
+  - name: Auth
+  - name: Projects
+  - name: API keys
+  - name: Devices
+  - name: Messages
+security: []
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Create a short-lived-by-policy operator bearer token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, device_name]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, maxLength: 200 }
+                device_name: { type: string, maxLength: 80 }
+      responses:
+        '201': { description: Token issued once; response has Cache-Control no-store. }
+        '401': { description: Invalid credentials. }
+        '403': { description: User disabled. }
+        '429': { description: Login rate limit exceeded. }
+  /auth/token:
+    delete:
+      tags: [Auth]
+      summary: Revoke the current operator token
+      security: [{ operatorBearer: [] }]
+      responses:
+        '200': { description: Token revoked. }
+        '401': { description: Unauthenticated. }
+  /me:
+    get:
+      tags: [Auth]
+      summary: Get current operator
+      security: [{ operatorBearer: [] }]
+      responses:
+        '200': { description: Operator profile. }
+  /users:
+    get:
+      tags: [Auth]
+      summary: List operator accounts (admin only)
+      security: [{ operatorBearer: [] }]
+      responses:
+        '200': { description: User profiles without password/token fields. }
+        '403': { description: Admin role required. }
+  /users/{userId}:
+    patch:
+      tags: [Auth]
+      summary: Change an operator role or access status (admin only)
+      security: [{ operatorBearer: [] }]
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                role: { type: string, enum: [admin, operator] }
+                status: { type: string, enum: [active, disabled] }
+      responses:
+        '200': { description: Account updated and audit event written. }
+        '403': { description: Admin role required. }
+        '422': { description: Invalid update or self lockout attempt. }
+  /projects:
+    get:
+      tags: [Projects]
+      security: [{ operatorBearer: [] }]
+      responses:
+        '200': { description: Projects owned by the authenticated operator. }
+    post:
+      tags: [Projects]
+      security: [{ operatorBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 120 }
+                daily_message_limit: { type: integer, minimum: 1, maximum: 1000, default: 20, description: Maximum requests accepted by this project per UTC day. }
+      responses:
+        '201': { description: Project created and audited. }
+  /projects/{projectId}:
+    get:
+      tags: [Projects]
+      security: [{ operatorBearer: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/projectId' }
+      responses:
+        '200': { description: Owned project. }
+        '404': { description: Not found or not owned by the operator. }
+  /projects/{projectId}/api-keys:
+    post:
+      tags: [API keys]
+      security: [{ operatorBearer: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/projectId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 80 }
+      responses:
+        '201': { description: Secret is returned once, with Cache-Control no-store; only SHA-256 hash is stored. }
+        '404': { description: Project not owned by the operator. }
+  /projects/{projectId}/api-keys/{apiKeyId}:
+    delete:
+      tags: [API keys]
+      security: [{ operatorBearer: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/projectId' }
+        - name: apiKeyId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Key revoked and audit event written. }
+  /projects/{projectId}/devices:
+    get:
+      tags: [Devices]
+      security: [{ operatorBearer: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/projectId' }
+      responses:
+        '200': { description: Project devices and last heartbeat metadata. Credentials are never returned. }
+    post:
+      tags: [Devices]
+      security: [{ operatorBearer: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/projectId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 120 }
+      responses:
+        '201': { description: Device credential returned once with Cache-Control no-store; only its hash is stored. }
+  /projects/{projectId}/devices/{deviceId}:
+    delete:
+      tags: [Devices]
+      security: [{ operatorBearer: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/projectId' }
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Device revoked; future device authentication is denied. }
+  /messages:
+    post:
+      tags: [Messages]
+      summary: Persist a message request for the gateway queue
+      description: >-
+        Requires a project API key and an idempotency key. Same key and same
+        payload returns the original message; same key with a different payload
+        returns 409. The message and outbox event commit in one MySQL transaction.
+        This endpoint does not send an SMS.
+      security: [{ projectApiKey: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, body]
+              properties:
+                to: { type: string, pattern: '^\+[1-9][0-9]{7,14}$', example: '+967711234567' }
+                body: { type: string, maxLength: 5000 }
+      responses:
+        '202': { description: Persisted and queued. Returns stable message id and status queued. }
+        '200': { description: Idempotent duplicate; original message returned. }
+        '409': { description: Idempotency key reused with a different payload. }
+        '422': { description: Validation error or missing/invalid idempotency key. }
+        '429': { description: Rate limit exceeded. }
+  /messages/{messageId}:
+    get:
+      tags: [Messages]
+      security: [{ projectApiKey: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/messageId' }
+      responses:
+        '200': { description: Message status and append-only lifecycle events for this API key's project. }
+        '404': { description: Message not found in the authenticated project. }
+  /devices/heartbeat:
+    post:
+      tags: [Devices]
+      security: [{ deviceBearer: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                app_version: { type: string, maxLength: 32 }
+                android_version: { type: string, maxLength: 32 }
+                api_level: { type: integer, minimum: 26, maximum: 100 }
+                network_status: { type: string, enum: [connected, no_internet, disconnected, unknown] }
+                sim_status: { type: string, enum: [ready, not_ready, absent, unknown] }
+      responses:
+        '200': { description: Heartbeat accepted. }
+  /devices/messages/claim:
+    get:
+      tags: [Devices]
+      security: [{ deviceBearer: [] }]
+      responses:
+        '200':
+          description: Next committed message assigned atomically to this project/device, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { oneOf: [{ $ref: '#/components/schemas/DeviceMessage' }, { type: 'null' }] }
+  /devices/messages/{messageId}/acknowledge:
+    post:
+      tags: [Devices]
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/messageId' }
+      responses:
+        '200': { description: Device receipt durably recorded as accepted_by_device. }
+        '404': { description: Not assigned to the authenticated device/project. }
+        '422': { description: Invalid lifecycle transition. }
+  /devices/messages/{messageId}/report:
+    post:
+      tags: [Devices]
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/messageId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/MessageStatus' }
+                detail_code: { type: string, maxLength: 48 }
+      responses:
+        '200': { description: Valid transition persisted; sent_to_network is not proof of recipient delivery. }
+        '404': { description: Not assigned to the authenticated device/project. }
+        '422': { description: Invalid lifecycle transition or report. }
+components:
+  securitySchemes:
+    operatorBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Sanctum
+      description: Operator token created by POST /auth/login; revoke with DELETE /auth/token.
+    projectApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    deviceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: One-time device credential; only its SHA-256 hash is stored.
+  parameters:
+    projectId:
+      name: projectId
+      in: path
+      required: true
+      schema: { type: integer }
+    messageId:
+      name: messageId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    MessageStatus:
+      type: string
+      enum: [sending, sent_to_network, send_failed, delivery_reported, delivery_failed, unknown]
+    DeviceMessage:
+      type: object
+      required: [id, to, body, status]
+      properties:
+        id: { type: string, format: uuid }
+        to: { type: string }
+        body: { type: string }
+        status: { type: string, enum: [assigned] }

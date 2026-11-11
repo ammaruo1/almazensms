@@ -1,0 +1,73 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-almazen_sms}
+      MYSQL_USER: ${DB_USERNAME:-almazen}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in backend/.env}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Set DB_ROOT_PASSWORD in backend/.env}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [backend]
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    command: ["sh", "-c", "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8000"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "php", "-r", "$$r=@file_get_contents('http://127.0.0.1:8000/up'); exit($$r===false?1:0);"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [backend]
+
+  queue:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    command: ["php", "artisan", "queue:work", "redis", "--queue=outbox", "--tries=5", "--timeout=60", "--sleep=2"]
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [backend]
+
+  scheduler:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    command: ["php", "artisan", "schedule:work"]
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [backend]
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
