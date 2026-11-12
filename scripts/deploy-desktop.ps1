@@ -37,14 +37,22 @@ function Test-DeployPath([string]$Path) {
     return $false
 }
 
+function Get-SshAuthOptions {
+  @(
+    '-o', 'PreferredAuthentications=password',
+    '-o', 'PubkeyAuthentication=no',
+    '-o', 'NumberOfPasswordPrompts=1',
+    '-o', 'StrictHostKeyChecking=accept-new'
+  )
+}
+
 function Get-SshBaseArgs {
-    @(
-        '-p', $port,
-        '-o', 'PreferredAuthentications=password',
-        '-o', 'PubkeyAuthentication=no',
-        '-o', 'NumberOfPasswordPrompts=1',
-        '-o', 'StrictHostKeyChecking=accept-new'
-    )
+  @(Get-SshAuthOptions) + @('-p', $port)
+}
+
+function Get-ScpBaseArgs {
+  # OpenSSH scp uses -P for port (-p means preserve file times).
+  @(Get-SshAuthOptions) + @('-P', $port)
 }
 
 Write-Host ''
@@ -91,46 +99,56 @@ try {
     }
 
     $deployStaged = @($staged | Where-Object { Test-DeployPath $_ })
+    $reuploadOnly = $false
     if ($deployStaged.Count -eq 0) {
         git reset -q
         Write-Host ''
-        Write-Host 'لا توجد تغييرات على ملفات الـ API للرفع. الخادم محدّث (بالنسبة لمجلدات النشر).' -ForegroundColor Yellow
-        exit 0
+        Write-Host 'لا توجد تغييرات جديدة على ملفات الـ API في Git.' -ForegroundColor Yellow
+        $reuploadAnswer = (Read-Host 'إذا فشل الرفع سابقاً اكتب REUPLOAD لرفع النسخة الحالية (أو Enter للخروج)').Trim()
+        if ($reuploadAnswer -cne 'REUPLOAD') { exit 0 }
+        $reuploadOnly = $true
+        Write-Host 'إعادة رفع النسخة الحالية من مجلدات API بدون commit جديد...' -ForegroundColor Cyan
+    }
+    else {
+        $added = New-Object System.Collections.Generic.List[string]
+        $modified = New-Object System.Collections.Generic.List[string]
+        $deleted = New-Object System.Collections.Generic.List[string]
+
+        foreach ($line in @(git status --porcelain)) {
+            if ([string]::IsNullOrWhiteSpace($line) -or $line.Length -lt 4) { continue }
+            $code = $line.Substring(0, 2).Trim()
+            $path = $line.Substring(3)
+            if ($path -match ' -> ') { $path = ($path -split ' -> ')[-1] }
+            if (-not (Test-DeployPath $path)) { continue }
+            if ($code -match 'D') { $deleted.Add($path) }
+            elseif ($code -match '^\?\?$' -or $code -match 'A') { $added.Add($path) }
+            else { $modified.Add($path) }
+        }
+
+        Write-Title "ملفات الـ API المعدّلة ($($modified.Count))"
+        $modified | ForEach-Object { Write-Host "  * $_" }
+        Write-Title "ملفات الـ API الجديدة ($($added.Count))"
+        $added | ForEach-Object { Write-Host "  + $_" -ForegroundColor Green }
+        Write-Title "ملفات الـ API المحذوفة ($($deleted.Count))"
+        $deleted | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+
+        Write-Host ''
+        Write-Host 'جارٍ رفع التحديث إلى الاستضافة. انتظر حتى تكتمل العملية...' -ForegroundColor Cyan
+
+        $name = git config user.name
+        $email = git config user.email
+        if ([string]::IsNullOrWhiteSpace($name)) { $name = 'Almazen SMS API' }
+        if ([string]::IsNullOrWhiteSpace($email)) { $email = 'deploy@almazen.online' }
+
+        $when = Get-Date -Format 'yyyy-MM-dd HH:mm'
+        git -c "user.name=$name" -c "user.email=$email" commit -m "نشر تحديثات API إلى الاستضافة $when"
+        if ($LASTEXITCODE -ne 0) { throw 'تعذر حفظ التعديلات في Git قبل الرفع.' }
     }
 
-    $added = New-Object System.Collections.Generic.List[string]
-    $modified = New-Object System.Collections.Generic.List[string]
-    $deleted = New-Object System.Collections.Generic.List[string]
-
-    foreach ($line in @(git status --porcelain)) {
-        if ([string]::IsNullOrWhiteSpace($line) -or $line.Length -lt 4) { continue }
-        $code = $line.Substring(0, 2).Trim()
-        $path = $line.Substring(3)
-        if ($path -match ' -> ') { $path = ($path -split ' -> ')[-1] }
-        if (-not (Test-DeployPath $path)) { continue }
-        if ($code -match 'D') { $deleted.Add($path) }
-        elseif ($code -match '^\?\?$' -or $code -match 'A') { $added.Add($path) }
-        else { $modified.Add($path) }
+    if ($reuploadOnly) {
+        Write-Host ''
+        Write-Host 'جارٍ رفع التحديث إلى الاستضافة. انتظر حتى تكتمل العملية...' -ForegroundColor Cyan
     }
-
-    Write-Title "ملفات الـ API المعدّلة ($($modified.Count))"
-    $modified | ForEach-Object { Write-Host "  * $_" }
-    Write-Title "ملفات الـ API الجديدة ($($added.Count))"
-    $added | ForEach-Object { Write-Host "  + $_" -ForegroundColor Green }
-    Write-Title "ملفات الـ API المحذوفة ($($deleted.Count))"
-    $deleted | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
-
-    Write-Host ''
-    Write-Host 'جارٍ رفع التحديث إلى الاستضافة. انتظر حتى تكتمل العملية...' -ForegroundColor Cyan
-
-    $name = git config user.name
-    $email = git config user.email
-    if ([string]::IsNullOrWhiteSpace($name)) { $name = 'Almazen SMS API' }
-    if ([string]::IsNullOrWhiteSpace($email)) { $email = 'deploy@almazen.online' }
-
-    $when = Get-Date -Format 'yyyy-MM-dd HH:mm'
-    git -c "user.name=$name" -c "user.email=$email" commit -m "نشر تحديثات API إلى الاستضافة $when"
-    if ($LASTEXITCODE -ne 0) { throw 'تعذر حفظ التعديلات في Git قبل الرفع.' }
 
     $sshArgs = @(Get-SshBaseArgs) + @($remote)
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -160,7 +178,7 @@ try {
         }
 
         $remoteTar = "$remoteHome/almazen-api-upload-$stamp-$directory.tar"
-        & scp @(Get-SshBaseArgs) + @($tarFile, "${remote}:$remoteTar")
+        & scp @(Get-ScpBaseArgs) + @($tarFile, "${remote}:$remoteTar")
         if ($LASTEXITCODE -ne 0) { throw "تعذر رفع مجلد $directory" }
 
         & ssh @sshArgs "tar -xf $remoteTar -C $remoteRoot && rm -f $remoteTar"
@@ -171,7 +189,7 @@ try {
 
     $openApi = Join-Path $backendRoot 'openapi.yaml'
     if (Test-Path -LiteralPath $openApi) {
-        & scp @(Get-SshBaseArgs) + @($openApi, "${remote}:$remoteRoot/openapi.yaml")
+        & scp @(Get-ScpBaseArgs) + @($openApi, "${remote}:$remoteRoot/openapi.yaml")
         if ($LASTEXITCODE -ne 0) { throw 'تعذر رفع openapi.yaml' }
     }
 
