@@ -30,7 +30,7 @@
                 <thead class="bg-slate-50 text-xs text-slate-500"><tr><th class="px-5 py-3">المشروع</th><th class="px-4 py-3">الهاتف</th><th class="px-4 py-3">الغرض</th><th class="px-4 py-3">الحالة</th><th class="px-4 py-3">المحاولات</th><th class="px-5 py-3">الانتهاء</th></tr></thead>
                 <tbody class="divide-y divide-slate-100">
                     @forelse ($challenges as $challenge)
-                        @php($label = ['pending' => 'بانتظار التحقق', 'verified' => 'تم التحقق', 'expired' => 'منتهٍ', 'exhausted' => 'استُنفدت المحاولات', 'superseded' => 'استُبدل'][$challenge->status] ?? $challenge->status)
+                        @php($label = ['pending' => 'بانتظار التحقق', 'verified' => 'تم التحقق', 'expired' => 'منتهٍ', 'exhausted' => 'استُنفدت المحاولات', 'superseded' => 'استُبدل', 'cancelled' => 'ملغى'][$challenge->status] ?? $challenge->status)
                         <tr>
                             <td class="px-5 py-4">{{ $challenge->project?->name }}</td>
                             <td class="px-4 py-4 font-mono text-xs" dir="ltr">{{ $challenge->phone_mask }}</td>

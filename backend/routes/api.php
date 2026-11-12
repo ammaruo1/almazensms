@@ -33,11 +33,13 @@ Route::prefix('v1')->middleware('https.only')->group(function (): void {
         Route::get('/messages/{messageId}', [MessageController::class, 'show']);
         Route::post('/otp/request', [OtpController::class, 'store']);
         Route::post('/otp/verify', [OtpController::class, 'verify']);
+        Route::post('/otp/{challenge}/cancel', [OtpController::class, 'cancel']);
     });
 
     Route::prefix('devices')->middleware(['device.auth', 'throttle:devices'])->group(function (): void {
         Route::post('/heartbeat', [DeviceController::class, 'heartbeat']);
         Route::get('/messages/claim', [DeviceMessageController::class, 'claim']);
+        Route::post('/messages/{messageId}/send-authorization', [DeviceMessageController::class, 'sendAuthorization']);
         Route::post('/messages/{messageId}/acknowledge', [DeviceMessageController::class, 'acknowledge']);
         Route::post('/messages/{messageId}/report', [DeviceMessageController::class, 'report']);
     });

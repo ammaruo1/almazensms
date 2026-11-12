@@ -17,7 +17,8 @@ data class RemoteCommandRecord(
     val encryptedBody: String,
     val status: String,
     val attemptId: String?,
-    val pendingReportStatus: String?
+    val pendingReportStatus: String?,
+    val sendAuthorizationRequired: Boolean,
 )
 
 object RemoteCommandStatus {
@@ -72,6 +73,9 @@ class SmsAttemptStore(context: Context) : SQLiteOpenHelper(context, DATABASE_NAM
             db.execSQL("ALTER TABLE attempts ADD COLUMN remote_message_id TEXT")
             createRemoteCommandTable(db)
         }
+        if (oldVersion < 4) {
+            db.execSQL("ALTER TABLE remote_commands ADD COLUMN send_authorization_required INTEGER NOT NULL DEFAULT 0")
+        }
     }
 
     private fun createEventTable(db: SQLiteDatabase) {
@@ -94,6 +98,7 @@ class SmsAttemptStore(context: Context) : SQLiteOpenHelper(context, DATABASE_NAM
             status TEXT NOT NULL,
             attempt_id TEXT,
             pending_report_status TEXT,
+            send_authorization_required INTEGER NOT NULL DEFAULT 0,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
         )""".trimIndent())
@@ -266,12 +271,19 @@ class SmsAttemptStore(context: Context) : SQLiteOpenHelper(context, DATABASE_NAM
         return attempts
     }
 
-    fun saveRemoteCommand(id: String, encryptedDestination: String, encryptedBody: String, createdAt: Long = System.currentTimeMillis()): Boolean {
+    fun saveRemoteCommand(
+        id: String,
+        encryptedDestination: String,
+        encryptedBody: String,
+        sendAuthorizationRequired: Boolean = false,
+        createdAt: Long = System.currentTimeMillis(),
+    ): Boolean {
         val values = ContentValues().apply {
             put("id", id)
             put("encrypted_destination", encryptedDestination)
             put("encrypted_body", encryptedBody)
             put("status", RemoteCommandStatus.RECEIVED)
+            put("send_authorization_required", if (sendAuthorizationRequired) 1 else 0)
             put("created_at", createdAt)
             put("updated_at", createdAt)
         }
@@ -280,7 +292,7 @@ class SmsAttemptStore(context: Context) : SQLiteOpenHelper(context, DATABASE_NAM
 
     fun remoteCommand(id: String): RemoteCommandRecord? = readableDatabase.query(
         "remote_commands",
-        arrayOf("id", "encrypted_destination", "encrypted_body", "status", "attempt_id", "pending_report_status"),
+        arrayOf("id", "encrypted_destination", "encrypted_body", "status", "attempt_id", "pending_report_status", "send_authorization_required"),
         "id = ?", arrayOf(id), null, null, null
     ).use { cursor ->
         if (!cursor.moveToFirst()) null else RemoteCommandRecord(
@@ -289,20 +301,31 @@ class SmsAttemptStore(context: Context) : SQLiteOpenHelper(context, DATABASE_NAM
             encryptedBody = cursor.getString(2),
             status = cursor.getString(3),
             attemptId = cursor.getString(4),
-            pendingReportStatus = cursor.getString(5)
+            pendingReportStatus = cursor.getString(5),
+            sendAuthorizationRequired = cursor.getInt(6) == 1,
         )
     }
 
     fun pendingRemoteCommands(limit: Int = 20): List<RemoteCommandRecord> = buildList {
         readableDatabase.query(
             "remote_commands",
-            arrayOf("id", "encrypted_destination", "encrypted_body", "status", "attempt_id", "pending_report_status"),
+            arrayOf("id", "encrypted_destination", "encrypted_body", "status", "attempt_id", "pending_report_status", "send_authorization_required"),
             "status IN (?, ?) OR pending_report_status IS NOT NULL",
             arrayOf(RemoteCommandStatus.RECEIVED, RemoteCommandStatus.ACCEPTED_BY_DEVICE),
             null, null, "created_at ASC", limit.toString()
         ).use { cursor ->
             while (cursor.moveToNext()) {
-                add(RemoteCommandRecord(cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getString(4), cursor.getString(5)))
+                add(
+                    RemoteCommandRecord(
+                        cursor.getString(0),
+                        cursor.getString(1),
+                        cursor.getString(2),
+                        cursor.getString(3),
+                        cursor.getString(4),
+                        cursor.getString(5),
+                        cursor.getInt(6) == 1,
+                    )
+                )
             }
         }
     }
@@ -358,6 +381,6 @@ class SmsAttemptStore(context: Context) : SQLiteOpenHelper(context, DATABASE_NAM
 
     companion object {
         private const val DATABASE_NAME = "almazen_sms_attempts.db"
-        private const val DATABASE_VERSION = 3
+        private const val DATABASE_VERSION = 4
     }
 }

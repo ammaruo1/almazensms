@@ -31,7 +31,7 @@ class MessageLifecycle
             if ($to === MessageStatus::Sending) {
                 $locked->attempt_count++;
             }
-            if (in_array($to, [MessageStatus::SendFailed, MessageStatus::DeliveryReported, MessageStatus::DeliveryFailed], true)) {
+            if (in_array($to, [MessageStatus::SendFailed, MessageStatus::DeliveryReported, MessageStatus::DeliveryFailed, MessageStatus::Cancelled], true)) {
                 $locked->completed_at = now();
             }
             $locked->save();

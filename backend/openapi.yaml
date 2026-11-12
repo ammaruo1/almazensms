@@ -280,6 +280,29 @@ paths:
         '200': { description: verified true and status verified. The code is not returned. }
         '403': { description: OTP is disabled for this project. }
         '422': { description: Verification failed. data.status is invalid, expired, or exhausted. The submitted code is not returned. }
+  /otp/{challengeId}/cancel:
+    post:
+      tags: [OTP]
+      summary: Cancel an OTP challenge and recall its message when possible
+      description: >-
+        Cancels the challenge and, when the linked message is still queued,
+        assigned, or only accepted by the device, transitions it to cancelled,
+        replaces the encrypted body with a safe withdrawn placeholder, and
+        suppresses pending outbox rows. Responses never include the code or
+        phone number. Replaying cancel on an already cancelled challenge is
+        idempotent. If cellular handoff has already started, the challenge is
+        closed but the message is not recalled and the response is 409 with
+        message_recalled false.
+      security: [{ projectApiKey: [] }]
+      parameters:
+        - name: challengeId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Challenge cancelled; message_recalled true when the message was withdrawn before send authorization. }
+        '404': { description: Challenge not in this project. }
+        '409': { description: Challenge closed but message cannot be recalled after send authorization reserved the message as sending. }
   /messages/{messageId}:
     get:
       tags: [Messages]
@@ -312,13 +335,35 @@ paths:
       security: [{ deviceBearer: [] }]
       responses:
         '200':
-          description: Next committed message assigned atomically to this project/device, or null.
+          description: >-
+            Next committed message assigned atomically to this project/device,
+            or null. Expired or superseded OTP messages are skipped and recalled
+            server-side. OTP rows include send_authorization_required true.
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   data: { oneOf: [{ $ref: '#/components/schemas/DeviceMessage' }, { type: 'null' }] }
+  /devices/messages/{messageId}/send-authorization:
+    post:
+      tags: [Devices]
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/messageId' }
+      responses:
+        '200':
+          description: >-
+            Atomic pre-send gate for OTP. Locks the challenge and message,
+            then transitions a valid accepted OTP message to sending before
+            returning send true. That reservation is the cancellation boundary.
+            A repeated authorization after a lost response returns send false
+            with reason already_started; Android must report UNKNOWN and must
+            not invoke SmsManager again. Responses contain no code or body.
+            Non-OTP messages return send true with reason not_otp. Denials are
+            a 200 response with send false and a reason such as cancelled,
+            expired, superseded, already_started, or not_sendable.
+        '404': { description: Message not assigned to this device. }
   /devices/messages/{messageId}/acknowledge:
     post:
       tags: [Devices]
@@ -382,9 +427,10 @@ components:
       enum: [sending, sent_to_network, send_failed, delivery_reported, delivery_failed, unknown]
     DeviceMessage:
       type: object
-      required: [id, to, body, status]
+      required: [id, to, body, status, send_authorization_required]
       properties:
         id: { type: string, format: uuid }
         to: { type: string }
         body: { type: string }
         status: { type: string, enum: [assigned] }
+        send_authorization_required: { type: boolean, description: True for OTP messages that require a send-authorization check before SmsManager. }

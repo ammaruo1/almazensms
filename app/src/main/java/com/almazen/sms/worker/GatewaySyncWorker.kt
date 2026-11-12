@@ -16,6 +16,8 @@ import com.almazen.sms.device.GatewayDiagnostics
 import com.almazen.sms.device.InternetStatus
 import com.almazen.sms.device.MobileServiceStatus
 import com.almazen.sms.device.SimCardStatus
+import com.almazen.sms.domain.OtpSendDecision
+import com.almazen.sms.domain.OtpSendGate
 import com.almazen.sms.domain.SmsInput
 import com.almazen.sms.domain.SmsInputValidation
 import com.almazen.sms.domain.SmsInputValidator
@@ -55,11 +57,12 @@ class GatewaySyncWorker(context: Context, parameters: WorkerParameters) : Worker
                 if (command == null) {
                     val remote = api.claim() ?: return Result.success()
                     store.saveRemoteCommand(
-                        remote.id,
-                        credentials.encryptPayload(remote.destination),
-                        credentials.encryptPayload(remote.body)
+                        remote.message.id,
+                        credentials.encryptPayload(remote.message.destination),
+                        credentials.encryptPayload(remote.message.body),
+                        sendAuthorizationRequired = remote.sendAuthorizationRequired,
                     )
-                    command = store.remoteCommand(remote.id) ?: return Result.retry()
+                    command = store.remoteCommand(remote.message.id) ?: return Result.retry()
                 }
 
                 sendCommand(command, api, store)
@@ -125,6 +128,28 @@ class GatewaySyncWorker(context: Context, parameters: WorkerParameters) : Worker
         val sim = snapshot.sims.firstOrNull { it.subscriptionId == latestSettings.subscriptionId } ?: return Result.success()
         val gateway = AndroidSmsGateway(applicationContext)
         val partCount = runCatching { gateway.estimateParts(body, sim.subscriptionId) }.getOrDefault(1)
+
+        val authorization = if (command.sendAuthorizationRequired) {
+            runCatching { api.sendAuthorization(command.id) }.getOrNull()
+        } else {
+            null
+        }
+        when (OtpSendGate.decide(command.sendAuthorizationRequired, authorization)) {
+            OtpSendDecision.RetryLater -> return Result.retry()
+            OtpSendDecision.Deny -> {
+                if (authorization?.reason == "already_started") {
+                    // The previous authorization may have reached the server while its
+                    // response was lost. Preserve ambiguity and never issue SMS again.
+                    store.markRemoteStatus(command.id, RemoteCommandStatus.UNKNOWN, "unknown")
+                    uploadPendingReports(api, store)
+                } else {
+                    store.markRemoteStatus(command.id, RemoteCommandStatus.FAILED, null)
+                }
+                return Result.success()
+            }
+            OtpSendDecision.Proceed -> Unit
+        }
+
         credentials.recordRemoteSendStartedAt(now)
         return when (gateway.send(SmsSendRequest(
             destination = valid.normalizedDestination,
@@ -139,7 +164,11 @@ class GatewaySyncWorker(context: Context, parameters: WorkerParameters) : Worker
                 GatewayWorkScheduler.enqueueDrain(applicationContext)
                 Result.success()
             }
-            is SmsSendResult.Rejected -> Result.retry()
+            is SmsSendResult.Rejected -> {
+                store.markRemoteStatus(command.id, RemoteCommandStatus.FAILED, "send_failed")
+                uploadPendingReports(api, store)
+                Result.success()
+            }
             is SmsSendResult.Failed -> {
                 uploadPendingReports(api, store)
                 Result.success()

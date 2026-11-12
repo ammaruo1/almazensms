@@ -12,7 +12,7 @@ Out of the current scope, and not implemented: backups and restore, alerting, ca
 
 ## Local tests added on 2026-11-12
 
-Feature and unit tests were added or updated for per-key quotas, idempotent replay, OTP, admin quota/OTP pages, and database-queue diagnostics. They were **not run**. Do not treat this paragraph as a pass. Earlier pass counts below are historical results from the dates in those sections.
+Feature and unit tests were added or updated for per-key quotas, idempotent replay, OTP, OTP withdrawal/cancel/send-authorization, admin quota/OTP pages, and database-queue diagnostics. Focused OTP withdrawal tests and `OtpSendGateTest` were added on the `otp-secure-foundation` branch. Limited verification on 2026-11-12 (worktree `almazensms-otp-wt`, branch `otp-secure-foundation`): **`OtpSendGateTest` — PASS** (`.\gradlew.bat :app:testDebugUnitTest --tests "com.almazen.sms.OtpSendGateTest"`, 4 tests, 0 failures/errors/skips). **`OtpWithdrawalTest` — not run:** `php` is not on `PATH`; the only CLI found was Laragon `php-8.1.10`, while `backend/composer.json` requires `^8.3` and `vendor/bin/pint` refuses to start on 8.1. **`vendor/bin/pint --dirty` — not run** for the same reason. Full backend suite, 72-hour observation, and real SMS were not run. `OtpWithdrawalTest` includes `test_send_authorization_reserves_sending_before_cancellation_can_recall` and `test_cancellation_before_send_authorization_prevents_the_send_reservation` for atomic `sending` reservation vs cancel ordering; those cases remain unrun here. Do not treat this paragraph as a pass for the entire product. Earlier pass counts below are historical results from the dates in those sections.
 
 ### Android API 29+ background execution (added, not run this round)
 

@@ -34,6 +34,15 @@ class OtpController extends Controller
         ], $result['duplicate'] ? 200 : 202);
     }
 
+    public function cancel(Request $request, string $challengeId, OtpService $otp): JsonResponse
+    {
+        /** @var Project $project */
+        $project = $request->attributes->get('apiProject');
+        $result = $otp->cancel($project, $challengeId);
+
+        return response()->json(['data' => $result['data']], $result['http_status']);
+    }
+
     public function verify(Request $request, OtpService $otp): JsonResponse
     {
         /** @var Project $project */
