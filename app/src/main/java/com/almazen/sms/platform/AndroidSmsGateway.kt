@@ -66,10 +66,11 @@ class AndroidSmsGateway(private val context: Context) {
             SmsAttemptStore(context).use { store ->
                 store.createAttempt(
                     id = id,
-                    maskedRecipient = SmsInputValidator.maskDestination(normalized.normalizedDestination),
+                    maskedRecipient = normalized.normalizedDestination,
                     simSlot = request.simSlot,
                     carrierName = carrier,
                     partCount = parts.size,
+                    messageBody = request.body,
                     remoteMessageId = request.remoteMessageId
                 )
             }

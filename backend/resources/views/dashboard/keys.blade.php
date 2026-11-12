@@ -6,7 +6,7 @@
     <div class="grid gap-6 xl:grid-cols-[.85fr_1.6fr]">
         <section class="h-fit rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 class="font-bold">مفتاح جديد</h2>
-            <p class="mt-2 text-sm leading-6 text-slate-500">المفتاح الكامل لا يُخزن، ويظهر مرة واحدة فقط. حدّد حصة هذا المفتاح من هنا.</p>
+            <p class="mt-2 text-sm leading-6 text-slate-500">يُحفظ المفتاح مشفّراً ويمكن للمدير كشفه لاحقاً من البطاقة. المفاتيح القديمة التي أُنشئت قبل ذلك لا تُسترجع. حدّد حصة هذا المفتاح من هنا.</p>
             <form method="POST" action="#" id="key-form" class="mt-5 space-y-4">
                 @csrf
                 <label class="block text-sm font-medium">المشروع
@@ -24,6 +24,29 @@
             <script>document.getElementById('key-form').addEventListener('submit', function (event) { event.preventDefault(); const project = this.elements.project_id.value; this.action = `/admin/projects/${encodeURIComponent(project)}/keys`; this.submit(); });</script>
         </section>
         <section class="space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <h2 class="font-bold">المفاتيح الحالية</h2>
+                <a href="{{ route('admin.keys.guide') }}" class="inline-flex rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">تنزيل دليل التعامل مع الخدمات</a>
+            </div>
+            <form method="GET" action="{{ route('admin.keys') }}" class="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-4">
+                <label class="block text-xs font-medium text-slate-600">بحث بالاسم أو البادئة<input name="q" value="{{ $filters['q'] }}" maxlength="80" class="form-control" placeholder="خادم الإنتاج"></label>
+                <label class="block text-xs font-medium text-slate-600">المشروع
+                    <select name="project_id" class="form-control">
+                        <option value="">كل المشاريع</option>
+                        @foreach ($filterProjects as $project)
+                            <option value="{{ $project->id }}" @selected((string) $filters['project_id'] === (string) $project->id)>{{ $project->name }}</option>
+                        @endforeach
+                    </select>
+                </label>
+                <label class="block text-xs font-medium text-slate-600">الحالة
+                    <select name="status" class="form-control">
+                        <option value="">الكل</option>
+                        <option value="active" @selected($filters['status'] === 'active')>نشط</option>
+                        <option value="revoked" @selected($filters['status'] === 'revoked')>ملغى</option>
+                    </select>
+                </label>
+                <button class="button-secondary self-end">تصفية</button>
+            </form>
             @forelse ($keys as $key)
                 @php
                     $keyUsed = (int) ($key->dailyUsage->first()?->message_count ?? 0);
@@ -52,16 +75,38 @@
                     </dl>
                     <p class="mt-2 text-xs text-slate-400">آخر طلب: {{ $key->last_used_at?->diffForHumans() ?? '—' }}</p>
                     @unless ($key->revoked_at)
-                        <form method="POST" action="{{ route('admin.keys.update', [$key->project, $key]) }}" class="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-3">
+                        <form method="POST" action="{{ route('admin.keys.update', [$key->project, $key]) }}" class="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2 lg:grid-cols-4">
                             @csrf @method('PATCH')
+                            <label class="text-xs font-medium text-slate-600">اسم المفتاح<input name="name" value="{{ $key->name }}" required maxlength="80" class="form-control"></label>
                             <label class="text-xs font-medium text-slate-600">الحد اليومي<input name="daily_message_limit" type="number" min="1" max="1000" value="{{ $key->daily_message_limit }}" required class="form-control"></label>
                             <label class="text-xs font-medium text-slate-600">في الدقيقة<input name="requests_per_minute" type="number" min="1" max="120" value="{{ $key->requests_per_minute }}" required class="form-control"></label>
-                            <button class="button-secondary self-end">حفظ حصة المفتاح</button>
+                            <button class="button-secondary self-end">حفظ</button>
                         </form>
-                        <form method="POST" action="{{ route('admin.keys.revoke', [$key->project, $key]) }}" class="mt-3" onsubmit="return confirm('إلغاء المفتاح فوراً؟')">
-                            @csrf @method('DELETE')
-                            <button class="text-xs text-rose-700">إلغاء المفتاح</button>
-                        </form>
+                        <div class="mt-3 flex flex-wrap items-center gap-4">
+                            @if (filled($key->secret_encrypted))
+                                <form method="POST" action="{{ route('admin.keys.reveal', [$key->project, $key]) }}">
+                                    @csrf
+                                    <button class="text-xs font-semibold text-emerald-800">كشف المفتاح</button>
+                                </form>
+                            @else
+                                <p class="text-xs text-amber-800">لا يمكن استرجاع هذا المفتاح لأنه أُنشئ قبل حفظ النسخة المشفّرة.</p>
+                            @endif
+                            <form method="POST" action="{{ route('admin.keys.revoke', [$key->project, $key]) }}" onsubmit="return confirm('إلغاء المفتاح فوراً؟')">
+                                @csrf @method('DELETE')
+                                <button class="text-xs text-rose-700">إلغاء المفتاح</button>
+                            </form>
+                        </div>
+                    @else
+                        <div class="mt-3">
+                            @if (filled($key->secret_encrypted))
+                                <form method="POST" action="{{ route('admin.keys.reveal', [$key->project, $key]) }}">
+                                    @csrf
+                                    <button class="text-xs font-semibold text-emerald-800">كشف المفتاح الملغى</button>
+                                </form>
+                            @else
+                                <p class="text-xs text-amber-800">لا يمكن استرجاع هذا المفتاح لأنه أُنشئ قبل حفظ النسخة المشفّرة.</p>
+                            @endif
+                        </div>
                     @endunless
                 </article>
             @empty

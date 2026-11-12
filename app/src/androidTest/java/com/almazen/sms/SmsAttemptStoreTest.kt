@@ -15,21 +15,21 @@ import java.util.UUID
 
 class SmsAttemptStoreTest {
     @Test
-    fun persistsOnlyMaskedRecipientAndTransitionsFromSentToDelivered() {
+    fun persistsRecipientAndBodyAndTransitionsFromSentToDelivered() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.deleteDatabase("almazen_sms_attempts.db")
         val id = UUID.randomUUID().toString()
 
         SmsAttemptStore(context).use { store ->
-            store.createAttempt(id, "•••• 567", simSlot = 0, carrierName = "Carrier", partCount = 1)
+            store.createAttempt(id, "+967771234567", simSlot = 0, carrierName = "Carrier", partCount = 1, messageBody = "مرحبا")
             assertEquals(SmsAttemptStatus.SENDING, store.listRecent().single().status)
             store.recordSentPart(id, 0, true, null)
             assertEquals(SmsAttemptStatus.SENT, store.listRecent().single().status)
             store.recordDeliveryPart(id, 0, true)
             val delivered = store.listRecent().single()
             assertEquals(SmsAttemptStatus.DELIVERED, delivered.status)
-            assertEquals("•••• 567", delivered.maskedRecipient)
-            assertFalse(delivered.maskedRecipient.contains("1234"))
+            assertEquals("+967771234567", delivered.maskedRecipient)
+            assertEquals("مرحبا", delivered.messageBody)
         }
         context.deleteDatabase("almazen_sms_attempts.db")
     }

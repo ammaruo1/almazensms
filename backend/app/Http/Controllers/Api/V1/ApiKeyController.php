@@ -19,8 +19,7 @@ class ApiKeyController extends Controller
         $plain = 'azm_live_'.Str::random(48);
         $key = $project->apiKeys()->create([
             'name' => $data['name'],
-            'prefix' => substr($plain, 0, 24),
-            'key_hash' => hash('sha256', $plain),
+            ...ApiKey::protect($plain),
         ]);
         $audit->record($request->user()->id, $project->id, 'api_key.created', 'api_key', (string) $key->id, ['name' => $key->name, 'prefix' => $key->prefix]);
 

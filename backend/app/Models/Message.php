@@ -12,7 +12,7 @@ class Message extends Model
 {
     use HasUuids;
 
-    protected $fillable = ['project_id', 'api_key_id', 'device_id', 'idempotency_key', 'payload_hash', 'destination', 'body', 'status', 'attempt_count', 'queued_at', 'assigned_at', 'completed_at'];
+    protected $fillable = ['project_id', 'api_key_id', 'device_id', 'idempotency_key', 'payload_hash', 'destination', 'destination_mask', 'body', 'status', 'attempt_count', 'queued_at', 'assigned_at', 'completed_at'];
 
     protected $hidden = ['destination', 'body', 'payload_hash', 'idempotency_key'];
 

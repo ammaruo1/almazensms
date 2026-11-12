@@ -9,12 +9,12 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
-import android.telephony.ServiceState
-import android.telephony.SmsManager
 import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
+import androidx.annotation.RequiresApi
+import com.almazen.sms.domain.CellularServiceRead
 import com.almazen.sms.domain.sanitizedCarrierName
 
 data class SimStatus(
@@ -39,7 +39,8 @@ data class GatewaySnapshot(
     val batteryPercent: Int?,
     val charging: Boolean?,
     val osVersion: String,
-    val apiLevel: Int
+    val apiLevel: Int,
+    val simListReadable: Boolean = true
 )
 
 class GatewayDiagnostics(private val context: Context) {
@@ -50,35 +51,50 @@ class GatewayDiagnostics(private val context: Context) {
             context.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)
         }
         val hasPhoneState = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
-        val activeSims = if (hasPhoneState && context.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_SUBSCRIPTION)) {
-            runCatching { activeSubscriptions() }.getOrDefault(emptyList())
-        } else emptyList()
+        val simList = readSimList(hasPhoneState)
         val battery = readBatteryStatus()
 
         return GatewaySnapshot(
             smsFeatureAvailable = smsFeature,
             sendSmsPermissionGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED,
             phoneStatePermissionGranted = hasPhoneState,
-            sims = activeSims,
+            sims = simList.sims,
             internet = readInternetStatus(),
             batteryPercent = battery?.first,
             charging = battery?.second,
             osVersion = Build.VERSION.RELEASE ?: "—",
-            apiLevel = Build.VERSION.SDK_INT
+            apiLevel = Build.VERSION.SDK_INT,
+            simListReadable = simList.readable
         )
     }
 
-    private fun activeSubscriptions(): List<SimStatus> {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
-            return emptyList()
+    private fun readSimList(hasPhoneState: Boolean): SimListRead {
+        if (!hasPhoneState || !context.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_SUBSCRIPTION)) {
+            return SimListRead(emptyList(), readable = true)
         }
-        val manager = context.getSystemService(SubscriptionManager::class.java) ?: return emptyList()
-        val subscriptions = try {
-            manager.activeSubscriptionInfoList.orEmpty()
+        return try {
+            activeSubscriptions()
         } catch (_: SecurityException) {
-            return emptyList()
+            SimListRead(emptyList(), readable = false)
+        } catch (_: RuntimeException) {
+            SimListRead(emptyList(), readable = false)
         }
-        return subscriptions.map { info ->
+    }
+
+    private fun activeSubscriptions(): SimListRead {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+            return SimListRead(emptyList(), readable = true)
+        }
+        val manager = context.getSystemService(SubscriptionManager::class.java)
+            ?: return SimListRead(emptyList(), readable = false)
+        val subscriptions = try {
+            manager.activeSubscriptionInfoList
+        } catch (_: SecurityException) {
+            return SimListRead(emptyList(), readable = false)
+        } catch (_: RuntimeException) {
+            return SimListRead(emptyList(), readable = false)
+        } ?: return SimListRead(emptyList(), readable = false)
+        return SimListRead(subscriptions.map { info ->
             val telephony = context.getSystemService(TelephonyManager::class.java)
             val cardState = try {
                 telephony?.getSimState(info.simSlotIndex)?.toCardStatus() ?: SimCardStatus.UNKNOWN
@@ -92,32 +108,38 @@ class GatewayDiagnostics(private val context: Context) {
                 card = cardState,
                 service = readServiceState(info)
             )
+        }, readable = true)
+    }
+
+    private data class SimListRead(val sims: List<SimStatus>, val readable: Boolean)
+
+    @SuppressLint("MissingPermission", "NewApi") // API 33 call is isolated by the runtime SDK check; no location permission is requested.
+    private fun readServiceState(info: SubscriptionInfo): MobileServiceStatus {
+        val apiLevel = Build.VERSION.SDK_INT
+        val locationFreeApi = apiLevel >= Build.VERSION_CODES.TIRAMISU
+        return try {
+            val base = context.getSystemService(TelephonyManager::class.java)
+            val telephony = base?.createForSubscriptionId(info.subscriptionId) ?: return MobileServiceStatus.UNKNOWN
+            val serviceState = if (apiLevel >= Build.VERSION_CODES.TIRAMISU) {
+                readServiceStateWithoutLocation(telephony)
+            } else {
+                @Suppress("DEPRECATION")
+                telephony.serviceState
+            }
+            CellularServiceRead.interpret(apiLevel, locationFreeApi, serviceState?.state)
+        } catch (_: SecurityException) {
+            MobileServiceStatus.UNKNOWN
+        } catch (_: UnsupportedOperationException) {
+            MobileServiceStatus.UNKNOWN
+        } catch (_: RuntimeException) {
+            MobileServiceStatus.UNKNOWN
         }
     }
 
-    @SuppressLint("MissingPermission") // INCLUDE_LOCATION_DATA_NONE deliberately avoids requesting location access.
-    private fun readServiceState(info: SubscriptionInfo): MobileServiceStatus = try {
-        val base = context.getSystemService(TelephonyManager::class.java)
-        val telephony = base?.createForSubscriptionId(info.subscriptionId) ?: return MobileServiceStatus.UNKNOWN
-        val serviceState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            telephony.getServiceState(TelephonyManager.INCLUDE_LOCATION_DATA_NONE)
-        } else {
-            @Suppress("DEPRECATION")
-            telephony.serviceState
-        }
-        val state = serviceState?.state
-        when (state) {
-            ServiceState.STATE_IN_SERVICE -> MobileServiceStatus.IN_SERVICE
-            ServiceState.STATE_OUT_OF_SERVICE -> MobileServiceStatus.OUT_OF_SERVICE
-            ServiceState.STATE_EMERGENCY_ONLY -> MobileServiceStatus.EMERGENCY_ONLY
-            ServiceState.STATE_POWER_OFF -> MobileServiceStatus.POWER_OFF
-            else -> MobileServiceStatus.UNKNOWN
-        }
-    } catch (_: SecurityException) {
-        MobileServiceStatus.UNKNOWN
-    } catch (_: UnsupportedOperationException) {
-        MobileServiceStatus.UNKNOWN
-    }
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @SuppressLint("MissingPermission") // The location-free overload does not require location permission.
+    private fun readServiceStateWithoutLocation(telephony: TelephonyManager) =
+        telephony.getServiceState(TelephonyManager.INCLUDE_LOCATION_DATA_NONE)
 
     private fun Int.toCardStatus(): SimCardStatus = when (this) {
         TelephonyManager.SIM_STATE_READY -> SimCardStatus.READY

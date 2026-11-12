@@ -7,7 +7,9 @@
                 <thead class="bg-slate-50 text-xs text-slate-500"><tr><th class="px-5 py-3">المشروع</th><th class="px-4 py-3">الحالة</th><th class="px-4 py-3">المستخدم</th><th class="px-4 py-3">السقف</th><th class="px-5 py-3">المتبقي</th></tr></thead>
                 <tbody class="divide-y divide-slate-100">
                     @forelse ($projects as $project)
-                        @php($used = (int) ($project->dailyUsage->first()?->message_count ?? 0))
+                        @php
+                            $used = (int) ($project->dailyUsage->first()?->message_count ?? 0);
+                        @endphp
                         <tr>
                             <td class="px-5 py-4 font-semibold">{{ $project->name }}</td>
                             <td class="px-4 py-4">{{ $project->status }}</td>

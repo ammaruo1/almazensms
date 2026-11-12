@@ -11,9 +11,9 @@ class Device extends Model
 {
     use HasUuids;
 
-    protected $fillable = ['project_id', 'name', 'token_prefix', 'token_hash', 'status', 'metadata', 'last_heartbeat_at', 'revoked_at'];
+    protected $fillable = ['project_id', 'name', 'token_prefix', 'token_hash', 'status', 'metadata', 'fcm_token', 'last_heartbeat_at', 'revoked_at'];
 
-    protected $hidden = ['token_hash'];
+    protected $hidden = ['token_hash', 'fcm_token'];
 
     protected function casts(): array
     {

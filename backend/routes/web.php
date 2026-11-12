@@ -23,12 +23,15 @@ Route::middleware(['auth', 'role.admin'])->prefix('admin')->name('admin.')->grou
     Route::post('/projects/{project}/devices', [DashboardController::class, 'storeDevice'])->name('devices.store');
     Route::delete('/projects/{project}/devices/{device}', [DashboardController::class, 'revokeDevice'])->name('devices.revoke');
     Route::get('/keys', [DashboardController::class, 'keys'])->name('keys');
+    Route::get('/keys/guide', [DashboardController::class, 'customerGuide'])->name('keys.guide');
     Route::post('/projects/{project}/keys', [DashboardController::class, 'storeKey'])->name('keys.store');
+    Route::post('/projects/{project}/keys/{apiKey}/reveal', [DashboardController::class, 'revealKey'])->name('keys.reveal');
     Route::patch('/projects/{project}/keys/{apiKey}', [DashboardController::class, 'updateKeyQuota'])->name('keys.update');
     Route::delete('/projects/{project}/keys/{apiKey}', [DashboardController::class, 'revokeKey'])->name('keys.revoke');
     Route::get('/otp', [DashboardController::class, 'otp'])->name('otp');
     Route::patch('/projects/{project}/otp', [DashboardController::class, 'updateOtp'])->name('otp.update');
     Route::get('/messages', [DashboardController::class, 'messages'])->name('messages');
+    Route::post('/messages/test-send', [DashboardController::class, 'sendTestMessage'])->middleware('throttle:admin-test-sms')->name('messages.test-send');
     Route::get('/usage', [DashboardController::class, 'usage'])->name('usage');
     Route::get('/audit', [DashboardController::class, 'audit'])->name('audit');
     Route::get('/diagnostics', [DashboardController::class, 'diagnostics'])->name('diagnostics');

@@ -8,6 +8,7 @@ use App\Models\Device;
 use App\Models\Message;
 use App\Models\Project;
 use App\Models\User;
+use App\Support\PhoneMask;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -148,8 +149,10 @@ class DashboardAccessTest extends TestCase
             'queued_at' => now(),
         ]);
 
+        $message->forceFill(['destination_mask' => PhoneMask::mask('+967700000001')])->save();
+
         $response = $this->actingAs($admin, 'web')->get(route('admin.messages', ['q' => substr($message->id, 0, 8)]));
-        $response->assertOk()->assertSee($message->id)->assertSee('unknown')->assertDontSee('+967700000001')->assertDontSee('private message text');
+        $response->assertOk()->assertSee($message->id)->assertSee('unknown')->assertSee(PhoneMask::mask('+967700000001'))->assertDontSee('+967700000001')->assertDontSee('private message text');
         $this->get(route('admin.index'))->assertOk()->assertDontSee('+967700000001')->assertDontSee('private message text');
     }
 

@@ -10,6 +10,7 @@ use App\Models\MessageEvent;
 use App\Models\OutboxEvent;
 use App\Models\Project;
 use App\Models\ProjectDailyUsage;
+use App\Support\PhoneMask;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -69,6 +70,7 @@ class MessageIntake
                 'idempotency_key' => $idempotencyKey,
                 'payload_hash' => $payloadHash,
                 'destination' => $destination,
+                'destination_mask' => PhoneMask::mask($destination),
                 'body' => $body,
                 'status' => MessageStatus::Queued,
                 'queued_at' => now(),
@@ -101,6 +103,11 @@ class MessageIntake
 
             return [$message, false];
         }, attempts: 3);
+
+        [$message, $replayed] = $result;
+        if ($replayed === false) {
+            app(FcmGatewayNotifier::class)->notifyProject((int) $message->project_id, (string) $message->id);
+        }
 
         return $result;
     }

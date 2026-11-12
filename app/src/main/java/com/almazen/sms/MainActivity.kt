@@ -1,7 +1,10 @@
 package com.almazen.sms
 
 import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
+import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -81,6 +84,7 @@ import com.almazen.sms.domain.SmsAttempt
 import com.almazen.sms.domain.SmsAttemptStatus
 import com.almazen.sms.domain.SmsInput
 import com.almazen.sms.domain.SmsInputValidation
+import com.almazen.sms.domain.GatewayOperationalStatusEvaluator
 import com.almazen.sms.domain.SmsInputValidator
 import com.almazen.sms.domain.displayLabel
 import com.almazen.sms.domain.shortLabel
@@ -88,8 +92,10 @@ import com.almazen.sms.platform.AndroidSmsGateway
 import com.almazen.sms.platform.SmsSendRequest
 import com.almazen.sms.platform.SmsSendResult
 import com.almazen.sms.platform.GatewayRecoveryCoordinator
+import com.almazen.sms.platform.GatewayPush
 import com.almazen.sms.platform.SmsSendCoordinator
 import com.almazen.sms.network.GatewayApiClient
+import com.almazen.sms.platform.GatewayDevicePolicy
 import com.almazen.sms.worker.GatewayWorkScheduler
 import com.almazen.sms.ui.theme.AlmazenSmsTheme
 import com.almazen.sms.ui.theme.BrandAccent
@@ -140,6 +146,7 @@ private fun AlmazenSmsApp() {
     var gatewayBusy by remember { mutableStateOf(false) }
     var gatewayActivationPending by remember { mutableStateOf(false) }
     var confirmAutomation by remember { mutableStateOf(false) }
+    var showBatteryExemptionDialog by remember { mutableStateOf(false) }
     fun refresh() {
         snapshot = diagnostics.snapshot()
         gatewaySettings = runCatching { gatewayCredentials.load() }.getOrNull()
@@ -153,7 +160,7 @@ private fun AlmazenSmsApp() {
         }.onFailure {
             scope.launch { snackbar.showSnackbar("تعذر قراءة سجل المحاولات المحلي.") }
         }
-        if (snapshot.sims.none { it.subscriptionId == selectedSubscriptionId }) {
+        if (snapshot.simListReadable && snapshot.sims.none { it.subscriptionId == selectedSubscriptionId }) {
             selectedSubscriptionId = snapshot.sims.singleOrNull()?.subscriptionId
         }
     }
@@ -164,9 +171,21 @@ private fun AlmazenSmsApp() {
             scope.launch { snackbar.showSnackbar("احفظ اتصالاً صالحاً بالخادم أولاً.") }
             return
         }
+        if (!snapshot.smsFeatureAvailable) {
+            scope.launch { snackbar.showSnackbar("هذا الجهاز لا يعلن توفر ميزة إرسال SMS.") }
+            return
+        }
+        if (!snapshot.simListReadable) {
+            scope.launch { snackbar.showSnackbar("تعذر قراءة قائمة الشرائح. لم يُؤكد غياب الشريحة، ولم يبدأ الإرسال الآلي.") }
+            return
+        }
         val sim = snapshot.sims.firstOrNull { it.subscriptionId == selectedSubscriptionId }
         if (sim == null || sim.card != SimCardStatus.READY) {
             scope.launch { snackbar.showSnackbar("اختر شريحة نشطة وجاهزة قبل تفعيل الإرسال الآلي.") }
+            return
+        }
+        if (sim.service != MobileServiceStatus.IN_SERVICE) {
+            scope.launch { snackbar.showSnackbar("خدمة الشبكة غير مؤكدة أو غير متاحة. لم يبدأ الإرسال.") }
             return
         }
         if (!snapshot.sendSmsPermissionGranted) {
@@ -175,10 +194,21 @@ private fun AlmazenSmsApp() {
             permissionDialog = "السماح مطلوب لكي يرسل الهاتف الرسائل التي يقبلها مفتاح API. قد تترتب رسوم من شركة الاتصالات. لن يبدأ التفعيل حتى تمنح إذن Android وتختار استمرارًا هنا."
             return
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            gatewayActivationPending = true
+            queuedPermission = Manifest.permission.POST_NOTIFICATIONS
+            permissionDialog = "تعرض الإشعارات وصول طلبات الخادم وحالة البوابة. نحتاج هذا الإذن لمسار FCM السريع؛ إذا رفضته أو أوقفته لاحقاً فقد تتأخر الطلبات حتى دورة WorkManager."
+            return
+        }
         if (gatewayCredentials.setEnabled(true)) {
             gatewaySettings = gatewayCredentials.load()
             GatewayWorkScheduler.enable(context.applicationContext)
-            scope.launch { snackbar.showSnackbar("فُعّل استقبال طلبات الخادم. قد يؤخر Android الفحص الدوري؛ لا يوجد ضمان للإرسال الفوري أو المتواصل.") }
+            if (!GatewayDevicePolicy.isExemptFromBatteryOptimizations(context)) {
+                showBatteryExemptionDialog = true
+            }
+            scope.launch { snackbar.showSnackbar("فُعّلت البوابة. لا يلزم إبقاء الشاشة مفتوحة؛ قد يتأخر العمل الاحتياطي وفق قيود Android.") }
         }
     }
 
@@ -188,16 +218,24 @@ private fun AlmazenSmsApp() {
         queuedPermission = null
         val enableGatewayAfterGrant = gatewayActivationPending
         gatewayActivationPending = false
-        if (granted && purpose == Manifest.permission.SEND_SMS && enableGatewayAfterGrant) {
+        if (granted && enableGatewayAfterGrant &&
+            (purpose == Manifest.permission.SEND_SMS || purpose == Manifest.permission.POST_NOTIFICATIONS)
+        ) {
             enableAutomaticGateway()
         }
         scope.launch {
             snackbar.showSnackbar(
                 when {
-                    granted && purpose == Manifest.permission.SEND_SMS -> "مُنح الإذن. راجع الرسالة ثم اضغط إرسال مرة أخرى."
-                    granted -> "مُنح إذن قراءة حالة الشرائح."
+                    granted && purpose == Manifest.permission.SEND_SMS && !enableGatewayAfterGrant ->
+                        "مُنح الإذن. راجع الرسالة ثم اضغط إرسال مرة أخرى."
+                    granted && purpose == Manifest.permission.POST_NOTIFICATIONS && enableGatewayAfterGrant ->
+                        "مُنح إذن الإشعارات. جارٍ تفعيل البوابة…"
+                    granted && purpose == Manifest.permission.SEND_SMS && enableGatewayAfterGrant ->
+                        "مُنح إذن SMS. أكمل التفعيل إن طُلب إذن الإشعارات."
+                    granted -> "مُنح الإذن المطلوب."
                     purpose == Manifest.permission.SEND_SMS -> "لم يُمنح إذن إرسال الرسائل. لم يتم إرسال أي شيء."
-                    else -> "لم يُمنح إذن فحص الشرائح. يمكنك متابعة بقية التطبيق."
+                    purpose == Manifest.permission.POST_NOTIFICATIONS -> "بدون إشعار البوابة قد يتأخر استقبال الرسائل."
+                    else -> "لم يُمنح الإذن المطلوب."
                 }
             )
         }
@@ -223,9 +261,19 @@ private fun AlmazenSmsApp() {
             when (event) {
                 Lifecycle.Event.ON_START -> if (callback == null && manager != null) {
                     callback = object : ConnectivityManager.NetworkCallback() {
-                        override fun onAvailable(network: Network) { scope.launch { refresh() } }
+                        override fun onAvailable(network: Network) {
+                            scope.launch { refresh() }
+                            com.almazen.sms.platform.GatewaySyncMonitor.nudgeIfEnabled(context)
+                        }
                         override fun onLost(network: Network) { scope.launch { refresh() } }
-                        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) { scope.launch { refresh() } }
+                        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                            scope.launch { refresh() }
+                            if (networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                                networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                            ) {
+                                com.almazen.sms.platform.GatewaySyncMonitor.nudgeIfEnabled(context)
+                            }
+                        }
                     }
                     runCatching { manager.registerDefaultNetworkCallback(callback!!) }
                         .onFailure { callback = null }
@@ -264,10 +312,13 @@ private fun AlmazenSmsApp() {
             is SmsInputValidation.Valid -> {
                 val subscriptionId = selectedSubscriptionId
                 if (subscriptionId == null) {
-                    permissionDialog = if (!snapshot.phoneStatePermissionGranted) {
-                        "يلزم إذن حالة الهاتف لعرض الشرائح النشطة واختيار الشريحة التي ستستخدم للإرسال. لا نقرأ الرسائل الواردة أو رقم الهاتف."
-                    } else {
-                        "لم يعرض Android أي شريحة نشطة لهذا التطبيق. تحقق من حالة SIM في إعدادات الهاتف."
+                    permissionDialog = when {
+                        !snapshot.phoneStatePermissionGranted ->
+                            "يلزم إذن حالة الهاتف لعرض الشرائح النشطة واختيار الشريحة التي ستستخدم للإرسال. لا نقرأ الرسائل الواردة أو رقم الهاتف."
+                        !snapshot.simListReadable ->
+                            "تعذر قراءة قائمة الشرائح. هذا ليس تأكيداً لغياب الشريحة، ولم يبدأ الإرسال."
+                        else ->
+                            "لم يعرض Android أي شريحة نشطة لهذا التطبيق. تحقق من حالة SIM في إعدادات الهاتف."
                     }
                     queuedPermission = if (!snapshot.phoneStatePermissionGranted) Manifest.permission.READ_PHONE_STATE else null
                     return
@@ -283,7 +334,12 @@ private fun AlmazenSmsApp() {
                 }
                 val sim = snapshot.sims.firstOrNull { it.subscriptionId == subscriptionId }
                 if (sim == null) {
-                    scope.launch { snackbar.showSnackbar("الشريحة المختارة لم تعد نشطة. حدّث التشخيص ثم أعد المراجعة.") }
+                    val message = if (!snapshot.simListReadable) {
+                        "تعذر قراءة قائمة الشرائح. لم يُؤكد غياب الشريحة، ولم يبدأ الإرسال."
+                    } else {
+                        "الشريحة المختارة لم تعد نشطة. حدّث التشخيص ثم أعد المراجعة."
+                    }
+                    scope.launch { snackbar.showSnackbar(message) }
                     refresh()
                     return
                 }
@@ -373,6 +429,11 @@ private fun AlmazenSmsApp() {
                 }
                 AppTab.GATEWAY -> {
                     item { SectionTitle("ربط بوابة الهاتف بالخادم", "بيانات الاعتماد مشفرة ومحفوظة محليًا") }
+                    item {
+                        GatewayOperationalCard(
+                            GatewayOperationalStatusEvaluator.evaluate(gatewaySettings, gatewaySyncState, snapshot)
+                        )
+                    }
                     item { SimPicker(snapshot, selectedSubscriptionId, { selectedSubscriptionId = it }, { permissionDialog = "نقرأ حالة الشرائح النشطة لاختيار الشريحة التي ستستخدمها الطلبات الواردة من API."; queuedPermission = Manifest.permission.READ_PHONE_STATE }) }
                     item {
                         GatewayConnectionCard(
@@ -407,7 +468,14 @@ private fun AlmazenSmsApp() {
                                                 }
                                                 val simState = if (sim.card == SimCardStatus.READY) "ready" else "not_ready"
                                                 val appVersion = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
-                                                GatewayApiClient(settings).heartbeat(appVersion, Build.VERSION.RELEASE ?: "unknown", Build.VERSION.SDK_INT, network, simState)
+                                                GatewayApiClient(settings).heartbeat(
+                                                    appVersion,
+                                                    Build.VERSION.RELEASE ?: "unknown",
+                                                    Build.VERSION.SDK_INT,
+                                                    network,
+                                                    simState,
+                                                    gatewayCredentials.fcmToken(),
+                                                )
                                                 check(gatewayCredentials.save(endpoint, token, sim.subscriptionId, sim.slot, false)) { "تعذر حفظ بيانات الربط محليًا." }
                                             }
                                             gatewaySettings = gatewayCredentials.load()
@@ -462,10 +530,27 @@ private fun AlmazenSmsApp() {
             onDismissRequest = { confirmAutomation = false },
             title = { Text("تفعيل استقبال رسائل API") },
             text = {
-                Text("بعد التفعيل، قد يرسل الهاتف تلقائيًا الرسائل التي يعتمدها الخادم باستخدام SIM المختارة. الخادم هو الذي يفرض حصة مفتاح API، وهذا التطبيق لا يعرض حدًا رقميًا قد يختلف عن إعداد الموقع. قد تترتب رسوم اتصال. Android قد يؤخر الفحص، ولا يمكن ضمان التوقيت أو التشغيل المستمر.")
+                Text("ستعمل البوابة تلقائياً في الخلفية. عند إعداد Firebase قد يوقظ إشعار الخادم الهاتف سريعاً؛ ويعمل WorkManager كاحتياط قد يتأخر بسبب Android. لا تستخدم الإيقاف القسري. قد تترتب رسوم شركة الاتصالات.")
             },
             confirmButton = { Button(onClick = { confirmAutomation = false; enableAutomaticGateway() }) { Text("أفهم وأفعّل") } },
             dismissButton = { TextButton(onClick = { confirmAutomation = false }) { Text("إلغاء") } }
+        )
+    }
+
+    if (showBatteryExemptionDialog) {
+        AlertDialog(
+            onDismissRequest = { showBatteryExemptionDialog = false },
+            title = { Text("جوال مخصص للبوابة") },
+            text = {
+                Text("لتشغيل OTP دون زيارة الجهاز باستمرار، اسمح لهذا التطبيق بالعمل «بدون قيود» في تحسين البطارية. على Samsung: الإعدادات → البطارية → قيود الخلفية.")
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showBatteryExemptionDialog = false
+                    runCatching { context.startActivity(GatewayDevicePolicy.batteryExemptionIntent(context)) }
+                }) { Text("فتح إعداد البطارية") }
+            },
+            dismissButton = { TextButton(onClick = { showBatteryExemptionDialog = false }) { Text("لاحقاً") } }
         )
     }
 
@@ -530,9 +615,18 @@ private fun GatewayConnectionCard(
     onPause: () -> Unit,
     onDisconnect: () -> Unit
 ) {
+    val context = LocalContext.current
     var serverUrl by remember(settings?.serverUrl) { mutableStateOf(settings?.serverUrl.orEmpty()) }
     var deviceToken by remember { mutableStateOf("") }
     var showDisconnectDialog by remember { mutableStateOf(false) }
+    val notificationsAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    val pushStatus = when {
+        !notificationsAllowed -> "إذن الإشعارات غير متاح؛ قد تتأخر الاستجابة السريعة."
+        !GatewayPush.isConfigured(context) -> "Firebase غير مضبوط؛ يعتمد الجهاز على WorkManager وقد يتأخر OTP إلى ما بعد انتهاء صلاحيته."
+        GatewayCredentialStore(context).fcmToken() == null -> "Firebase مضبوط، لكن تسجيل رمز الجهاز لم يكتمل بعد."
+        else -> "رمز FCM محفوظ؛ وصول الإشعار السريع غير مضمون من Android أو Google Play Services."
+    }
 
     Card(colors = CardDefaults.cardColors(containerColor = BrandCard), shape = RoundedCornerShape(22.dp)) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -559,6 +653,17 @@ private fun GatewayConnectionCard(
             if (settings != null) {
                 Text("بيانات جهاز محفوظة ومخفية · الشريحة المحفوظة SIM ${settings.simSlot + 1}", color = BrandMuted, style = MaterialTheme.typography.bodySmall)
                 Text("حالة آخر اتصال: ${syncStateLabel(syncState.state)}${if (syncState.updatedAt > 0) " · ${formatDate(syncState.updatedAt)}" else ""}", color = BrandMuted, style = MaterialTheme.typography.bodySmall)
+                Text("الإيقاظ السريع: $pushStatus", color = BrandMuted, style = MaterialTheme.typography.bodySmall)
+                if (!notificationsAllowed) {
+                    OutlinedButton(
+                        onClick = {
+                            val intent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                            context.startActivity(intent)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("فتح إعدادات إشعارات ALMAZEN SMS") }
+                }
             }
             Button(
                 onClick = { onTestAndSave(serverUrl, deviceToken) { deviceToken = "" } },
@@ -574,7 +679,7 @@ private fun GatewayConnectionCard(
                 OutlinedButton(onClick = { showDisconnectDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("فصل الجهاز وحذف بيانات اعتماده") }
             }
             Text(
-                "WorkManager يفحص الطلبات كل 15 دقيقة على الأقل حسب جدولة Android، وقد يتأخر بسبب النظام أو الشبكة. الخادم يفرض حصة مفتاح API، ولا يُعرض هنا رقم حصة ثابت. الإرسال البعيد متسلسل بفاصل محلي لا يقل عن دقيقة. هذا لا يضمن تشغيلًا دائمًا ولا وصول SMS.",
+                "لا يلزم إبقاء شاشة البوابة مضاءة أو مفتوحة. FCM هو المسار السريع عند إعداد Firebase، وWorkManager احتياط بدورة لا تقل عن 15 دقيقة وقد تتأخر أكثر. الهاتف على الشاحن والإنترنت يقلل مخاطر الانقطاع ولا يمنعها. لا تستخدم الإيقاف القسري.",
                 color = BrandMuted,
                 style = MaterialTheme.typography.bodySmall
             )
@@ -594,14 +699,35 @@ private fun GatewayConnectionCard(
     }
 }
 
-private fun syncStateLabel(state: String): String = when (state) {
-    "connected" -> "الخادم أجاب"
-    "network_error" -> "تعذر الوصول للشبكة أو الخادم"
-    "backend_error" -> "رفض الخادم الطلب أو حدث خطأ"
-    "credential_rejected" -> "بيانات الجهاز مرفوضة؛ أُوقف الاستقبال"
-    "permission_unavailable" -> "صلاحية الجهاز غير متاحة"
-    "local_error" -> "تعذر حفظ حالة محلية"
-    else -> "لم يحدث اتصال بعد"
+private fun syncStateLabel(state: String): String = com.almazen.sms.domain.GatewaySyncStateLabels.label(state)
+
+@Composable
+private fun GatewayOperationalCard(status: com.almazen.sms.domain.GatewayOperationalStatus) {
+    Card(colors = CardDefaults.cardColors(containerColor = BrandCard), shape = RoundedCornerShape(22.dp)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("جاهزية الخلفية والاستعادة", fontWeight = FontWeight.Bold, color = BrandText)
+            StatusPill(
+                when (status.phase) {
+                    com.almazen.sms.domain.GatewayOperationalPhase.READY -> "جاهز للجدولة"
+                    com.almazen.sms.domain.GatewayOperationalPhase.WAITING -> "بانتظار النظام أو الشبكة"
+                    com.almazen.sms.domain.GatewayOperationalPhase.BLOCKED -> "محجوب"
+                    com.almazen.sms.domain.GatewayOperationalPhase.PAUSED -> "متوقف"
+                    com.almazen.sms.domain.GatewayOperationalPhase.NOT_CONFIGURED -> "غير مُعد"
+                },
+                status.phase == com.almazen.sms.domain.GatewayOperationalPhase.READY
+            )
+            Text(status.headline, fontWeight = FontWeight.SemiBold, color = BrandText)
+            Text(status.detail, color = BrandMuted, style = MaterialTheme.typography.bodySmall)
+            status.recoverySteps.forEachIndexed { index, step ->
+                Text("${index + 1}. $step", color = BrandMuted, style = MaterialTheme.typography.bodySmall)
+            }
+            Text(
+                "لا نستخدم خدمة أمامية دائمة ولا نطلب استثناء بطارية تلقائياً. الإيقاف الإجباري للتطبيق يوقف العمل حتى تفتحه يدوياً.",
+                color = BrandMuted,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
 }
 
 @Composable
@@ -624,7 +750,13 @@ private fun GatewayStatusCard(snapshot: GatewaySnapshot) {
                 else -> "${snapshot.batteryPercent}% · لا يظهر الشحن"
             }, snapshot.charging == true)
             HorizontalDivider(color = BrandMuted.copy(alpha = .22f))
-            if (snapshot.sims.isEmpty()) {
+            if (!snapshot.simListReadable) {
+                Text(
+                    "تعذر قراءة قائمة الشرائح. هذا ليس تأكيداً لغياب الشريحة.",
+                    color = BrandMuted,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            } else if (snapshot.sims.isEmpty()) {
                 Text(
                     if (snapshot.phoneStatePermissionGranted) "لم يعرض Android شريحة نشطة. قد لا تعني هذه القراءة وحدها عدم وجود SIM." else "حالة SIM مخفية حتى تمنح إذن حالة الهاتف من شاشة الإرسال.",
                     color = BrandMuted,
@@ -656,7 +788,7 @@ private fun SimSummary(sim: SimStatus) {
             MobileServiceStatus.OUT_OF_SERVICE -> "خارج الخدمة"
             MobileServiceStatus.EMERGENCY_ONLY -> "مكالمات الطوارئ فقط"
             MobileServiceStatus.POWER_OFF -> "الراديو متوقف"
-            MobileServiceStatus.UNKNOWN -> "غير متاحة من النظام"
+            MobileServiceStatus.UNKNOWN -> "غير مُبلَّغة"
         }, sim.service == MobileServiceStatus.IN_SERVICE)
     }
 }
@@ -669,6 +801,7 @@ private fun SimPicker(snapshot: GatewaySnapshot, selected: Int?, onSelected: (In
             Text("نختار معرّف الاشتراك صراحةً لتجنّب إرسال الرسالة عبر SIM غير المقصودة.", color = BrandMuted, style = MaterialTheme.typography.bodySmall)
             when {
                 !snapshot.phoneStatePermissionGranted -> OutlinedButton(onClick = onRequestPermission, modifier = Modifier.fillMaxWidth()) { Text("السماح بفحص الشرائح") }
+                !snapshot.simListReadable -> Text("تعذر قراءة قائمة الشرائح. لم يُؤكد غياب الشريحة.", color = BrandMuted)
                 snapshot.sims.isEmpty() -> Text("لا توجد شريحة نشطة ظاهرة للتطبيق.", color = BrandMuted)
                 else -> snapshot.sims.forEach { sim ->
                     val isSelected = selected == sim.subscriptionId
@@ -713,7 +846,7 @@ private fun PrivacyNote() {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
             Text("خصوصيتك", fontWeight = FontWeight.Bold, color = BrandAccent)
             Spacer(Modifier.width(10.dp))
-            Text("يحفظ سجل المحاولة حالة الإرسال والرقم مقنّعًا. لا يُحفظ نص الرسالة، ولا يقرأ التطبيق صندوق الوارد.", color = BrandText, style = MaterialTheme.typography.bodySmall)
+            Text("يحفظ السجل رقم المستلم ونص الرسالة وحالة الإرسال على هذا الجهاز فقط. لا يقرأ التطبيق صندوق الوارد.", color = BrandText, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -726,8 +859,27 @@ private fun AttemptCard(attempt: SmsAttempt, detailed: Boolean = false) {
                 Text(attempt.status.displayLabel(), fontWeight = FontWeight.Bold, color = statusColor(attempt.status))
                 StatusPill(attempt.status.shortLabel(), attempt.status == SmsAttemptStatus.SENT || attempt.status == SmsAttemptStatus.DELIVERED)
             }
-            Text("${attempt.maskedRecipient} · SIM ${attempt.simSlot + 1} · ${attempt.carrierName}", color = BrandText)
-            Text("${formatDate(attempt.createdAt)} · ${attempt.partCount} جزء", color = BrandMuted, style = MaterialTheme.typography.bodySmall)
+            Text("إلى: ${attempt.maskedRecipient}", color = BrandText, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+            when {
+                !attempt.messageBody.isNullOrBlank() -> Text(
+                    attempt.messageBody,
+                    color = BrandText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = if (detailed) 8 else 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                attempt.maskedRecipient.startsWith("••••") -> Text(
+                    "رقم أو نص غير محفوظين في هذا الإصدار القديم من السجل.",
+                    color = BrandMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                else -> Text(
+                    "لا يوجد نص محفوظ لهذه المحاولة.",
+                    color = BrandMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Text("SIM ${attempt.simSlot + 1} · ${attempt.carrierName} · ${formatDate(attempt.createdAt)} · ${attempt.partCount} جزء", color = BrandMuted, style = MaterialTheme.typography.bodySmall)
             if (detailed) {
                 Text("معرّف: ${attempt.id.take(8)}", color = BrandMuted, style = MaterialTheme.typography.labelSmall)
                 attempt.detail?.let { Text(it, color = BrandMuted, style = MaterialTheme.typography.bodySmall) }

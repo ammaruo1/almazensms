@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\PhoneMask;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -74,11 +75,6 @@ class OtpChallenge extends Model
 
     public static function maskPhone(string $e164): string
     {
-        $digits = preg_replace('/\D+/', '', $e164) ?? '';
-        if (strlen($digits) <= 2) {
-            return '+**';
-        }
-
-        return '+'.str_repeat('*', strlen($digits) - 2).substr($digits, -2);
+        return PhoneMask::mask($e164);
     }
 }

@@ -15,7 +15,10 @@ secrets.properties
 /build/
 **/build/
 *.apk
+app/google-services.json
+backend/storage/app/firebase-credentials.json
 *.aab
+/dist/
 /captures/
 .externalNativeBuild/
 .cxx/

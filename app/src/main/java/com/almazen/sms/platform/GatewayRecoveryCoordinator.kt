@@ -17,14 +17,15 @@ object GatewayRecoveryCoordinator {
     /** After BOOT_COMPLETED: mark in-flight sends unknown and optionally enqueue WorkManager. */
     fun reconcileAfterBoot(context: Context) {
         val appContext = context.applicationContext
-        val interrupted = runCatching {
+        runCatching {
             SmsAttemptStore(appContext).use { it.markInterruptedAttemptsUnknown() }
-        }.getOrElse {
+        }.onSuccess { interrupted ->
+            Log.i(TAG, "Boot reconciliation completed; interrupted attempts=$interrupted")
+        }.onFailure {
             Log.w(TAG, "Boot reconciliation could not update local attempt state")
-            return
         }
-        Log.i(TAG, "Boot reconciliation completed; interrupted attempts=$interrupted")
-        rescheduleGatewaySyncIfEnabled(appContext)
+        rescheduleGatewaySyncIfEnabled(appContext, restorePeriodic = true)
+        GatewaySyncMonitor.startIfNeeded(appContext)
     }
 
     /** On cold start / UI entry: stale callbacks + WorkManager nudge when gateway is enabled. */
@@ -35,13 +36,35 @@ object GatewayRecoveryCoordinator {
                 it.markStaleAttemptsUnknown(System.currentTimeMillis() - STALE_CALLBACK_MS)
             }
         }.onFailure { Log.w(TAG, "Startup reconciliation could not refresh attempt state") }
-        rescheduleGatewaySyncIfEnabled(appContext)
+        rescheduleGatewaySyncIfEnabled(appContext, restorePeriodic = true)
+        GatewaySyncMonitor.startIfNeeded(appContext)
     }
 
-    private fun rescheduleGatewaySyncIfEnabled(context: Context) {
+    /** After an app update the process was killed, so in-flight sends are UNKNOWN and are not resent. */
+    fun reconcileAfterPackageUpdate(context: Context) {
+        val appContext = context.applicationContext
+        runCatching {
+            SmsAttemptStore(appContext).use { it.markInterruptedAttemptsUnknown() }
+        }.onSuccess { interrupted ->
+            Log.i(TAG, "Update reconciliation completed; interrupted attempts=$interrupted")
+        }.onFailure {
+            Log.w(TAG, "Update reconciliation could not update local attempt state")
+        }
+        rescheduleGatewaySyncIfEnabled(appContext, restorePeriodic = true)
+        GatewaySyncMonitor.startIfNeeded(appContext)
+    }
+
+    private fun rescheduleGatewaySyncIfEnabled(context: Context, restorePeriodic: Boolean = false) {
         val enabled = runCatching { GatewayCredentialStore(context).load()?.enabled == true }
             .getOrDefault(false)
-        if (!enabled) return
+        if (!enabled) {
+            GatewaySyncMonitor.stop(context)
+            return
+        }
+        if (restorePeriodic) {
+            runCatching { GatewayWorkScheduler.restorePeriodicIfEnabled(context) }
+                .onFailure { Log.w(TAG, "Could not restore periodic gateway work") }
+        }
         runCatching { GatewayWorkScheduler.enqueueNow(context) }
             .onFailure { Log.w(TAG, "Could not enqueue gateway sync after recovery") }
     }

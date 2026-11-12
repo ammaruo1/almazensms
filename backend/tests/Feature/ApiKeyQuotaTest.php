@@ -87,6 +87,7 @@ class ApiKeyQuotaTest extends TestCase
         ]);
 
         $this->actingAs($admin, 'web')->patch(route('admin.keys.update', [$project, $key]), [
+            'name' => 'site',
             'daily_message_limit' => 15,
             'requests_per_minute' => 4,
         ])->assertRedirect();
@@ -106,6 +107,7 @@ class ApiKeyQuotaTest extends TestCase
 
         $this->actingAs($admin, 'web')->get(route('admin.keys'))->assertOk()->assertSee('الحصة الفعالة')->assertDontSee($secret);
         $this->patch(route('admin.keys.update', [$project, $key]), [
+            'name' => 'site',
             'daily_message_limit' => 5000,
             'requests_per_minute' => 4,
         ])->assertSessionHasErrors('daily_message_limit');

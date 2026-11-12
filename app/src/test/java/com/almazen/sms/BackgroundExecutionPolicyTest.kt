@@ -60,6 +60,8 @@ class BackgroundExecutionPolicyTest(private val apiLevel: Int) {
         assertTrue(limits.isNotEmpty())
         assertTrue(limits.any { it.contains("force-stop") || it.contains("إيقاف التطبيق") })
         assertTrue(limits.any { it.contains("24") || it.contains("متواصل") })
+        assertTrue(limits.any { it.contains("لا تحتاج البوابة إلى إبقاء الشاشة مضاءة") })
+        assertTrue(limits.none { it.contains("كل 5 ثوانٍ") })
     }
 
     companion object {

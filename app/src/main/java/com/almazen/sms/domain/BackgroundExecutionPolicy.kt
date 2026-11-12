@@ -49,7 +49,7 @@ object BackgroundExecutionPolicy {
 
     /**
      * Starting a foreground service from the background is restricted from API 31 (with limited exceptions).
-     * This app does not start FGS for gateway sync; the flag documents why.
+     * FGS for gateway sync is started from foreground user actions; background starts remain restricted.
      */
     fun backgroundForegroundServiceStartRestricted(apiLevel: Int): Boolean = apiLevel >= ANDROID_12_API
 
@@ -67,18 +67,16 @@ object BackgroundExecutionPolicy {
     fun operationalLimitations(apiLevel: Int): List<String> {
         require(isSupportedApiLevel(apiLevel))
         val shared = mutableListOf(
-            "فحص الخادم عبر WorkManager قد يتأخر بسبب Doze أو تحسين البطارية أو قيود الشركة المصنعة.",
+            "لا تحتاج البوابة إلى إبقاء الشاشة مضاءة. FCM هو المسار السريع عند إعداده، وقد يتأخر أو لا يصل.",
+            "WorkManager هو المسار الاحتياطي؛ الحد الأدنى للدورية 15 دقيقة، وقد يتأخر أكثر مع Doze أو سياسة الشركة المصنّعة.",
             "إيقاف التطبيق إجبارياً (force-stop) يوقف المزامنة حتى يفتح المستخدم التطبيق مرة أخرى.",
-            "لا يوجد ضمان لإرسال فوري أو تشغيل متواصل على مدار الساعة."
+            "لا يوجد ضمان لإرسال فوري بالمللي ثانية أو تشغيل متواصل 24/7."
         )
         if (apiLevel < ANDROID_12_API) {
             shared += "على Android 10–11 لا يُستخدم العمل المُعجَّل في WorkManager؛ الفحص الفوري يعتمد على الجدولة العادية."
         }
         if (apiLevel >= ANDROID_12_API) {
             shared += "على Android 12+ تُقيَّد بدء خدمات أمامية من الخلفية؛ لذلك لا نعتمد على خدمة أمامية دائمة للمزامنة."
-        }
-        if (dataSyncForegroundServiceTimeoutApplies(apiLevel)) {
-            shared += "خدمات dataSync الأمامية محدودة زمنياً على Android 15+؛ المسار الرسمي يبقى WorkManager."
         }
         return shared
     }

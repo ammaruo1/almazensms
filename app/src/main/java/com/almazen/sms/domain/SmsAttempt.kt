@@ -14,6 +14,7 @@ enum class SmsAttemptStatus {
 data class SmsAttempt(
     val id: String,
     val maskedRecipient: String,
+    val messageBody: String?,
     val status: SmsAttemptStatus,
     val createdAt: Long,
     val simSlot: Int,

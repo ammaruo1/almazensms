@@ -52,8 +52,14 @@ class DeviceController extends Controller
             'api_level' => ['nullable', 'integer', 'min:26', 'max:100'],
             'network_status' => ['nullable', 'in:connected,no_internet,disconnected,unknown'],
             'sim_status' => ['nullable', 'in:ready,not_ready,absent,unknown'],
+            'fcm_token' => ['nullable', 'string', 'max:4096'],
         ]);
-        $device->forceFill(['last_heartbeat_at' => now(), 'metadata' => $data])->save();
+        $metadata = collect($data)->except('fcm_token')->all();
+        $device->forceFill([
+            'last_heartbeat_at' => now(),
+            'metadata' => $metadata,
+            'fcm_token' => filled($data['fcm_token'] ?? null) ? $data['fcm_token'] : $device->fcm_token,
+        ])->save();
 
         return response()->json(['accepted' => true, 'server_time' => now()->toISOString()]);
     }

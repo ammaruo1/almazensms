@@ -25,5 +25,6 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('dashboard-login', fn (Request $request) => Limit::perMinute(5)->by(strtolower((string) $request->input('email')).'|'.$request->ip()));
         RateLimiter::for('auth', fn (Request $request) => Limit::perMinute(5)->by(strtolower((string) $request->input('email')).'|'.$request->ip()));
         RateLimiter::for('devices', fn (Request $request) => Limit::perMinute(120)->by((string) $request->attributes->get('gatewayDevice')?->id));
+        RateLimiter::for('admin-test-sms', fn (Request $request) => Limit::perMinutes(10, 2)->by('admin-test-sms|'.($request->user()?->id ?? $request->ip())));
     }
 }

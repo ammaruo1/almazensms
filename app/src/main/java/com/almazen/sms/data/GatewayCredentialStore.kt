@@ -68,8 +68,24 @@ class GatewayCredentialStore(context: Context) {
         preferences.edit().putLong(KEY_LAST_REMOTE_SEND, timestamp).commit()
     }
 
-    fun recordSyncState(state: String, timestamp: Long = System.currentTimeMillis()) {
-        preferences.edit().putString(KEY_SYNC_STATE, state.take(32)).putLong(KEY_SYNC_UPDATED_AT, timestamp).commit()
+    fun recordSyncState(state: String, timestamp: Long = System.currentTimeMillis()): String? {
+        val previous = preferences.getString(KEY_SYNC_STATE, null)
+        val editor = preferences.edit()
+            .putString(KEY_SYNC_STATE, state.take(32))
+            .putLong(KEY_SYNC_UPDATED_AT, timestamp)
+        if (state == "connected") {
+            editor.putLong(KEY_LAST_HEARTBEAT_OK, timestamp)
+        }
+        editor.commit()
+        return previous
+    }
+
+    fun lastSuccessfulHeartbeatAt(): Long = preferences.getLong(KEY_LAST_HEARTBEAT_OK, 0L)
+
+    fun fcmToken(): String? = preferences.getString(KEY_FCM_TOKEN, null)?.takeIf { it.isNotBlank() }
+
+    fun saveFcmToken(token: String) {
+        preferences.edit().putString(KEY_FCM_TOKEN, token.take(4096)).commit()
     }
 
     fun syncStatus(): GatewaySyncStatus = GatewaySyncStatus(
@@ -126,6 +142,8 @@ class GatewayCredentialStore(context: Context) {
         private const val KEY_LAST_REMOTE_SEND = "last_remote_send_started_at"
         private const val KEY_SYNC_STATE = "last_sync_state"
         private const val KEY_SYNC_UPDATED_AT = "last_sync_updated_at"
+        private const val KEY_LAST_HEARTBEAT_OK = "last_successful_heartbeat_at"
+        private const val KEY_FCM_TOKEN = "fcm_token"
 
         fun validateServerUrl(serverUrl: String): String {
             return GatewayUrlPolicy.validate(serverUrl)

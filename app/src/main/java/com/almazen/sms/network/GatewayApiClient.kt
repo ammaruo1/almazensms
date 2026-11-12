@@ -1,6 +1,7 @@
 package com.almazen.sms.network
 
 import com.almazen.sms.data.GatewaySettings
+import com.almazen.sms.domain.SendAuthorizationResult
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -8,22 +9,48 @@ import java.net.URL
 
 data class RemoteMessage(val id: String, val destination: String, val body: String)
 
+data class RemoteClaim(val message: RemoteMessage, val sendAuthorizationRequired: Boolean)
+
 class GatewayApiClient(private val settings: GatewaySettings) {
-    fun heartbeat(appVersion: String, androidVersion: String, apiLevel: Int, networkStatus: String, simStatus: String) {
+    fun heartbeat(
+        appVersion: String,
+        androidVersion: String,
+        apiLevel: Int,
+        networkStatus: String,
+        simStatus: String,
+        fcmToken: String? = null,
+    ) {
         post("/devices/heartbeat", JSONObject().apply {
             put("app_version", appVersion)
             put("android_version", androidVersion)
             put("api_level", apiLevel)
             put("network_status", networkStatus)
             put("sim_status", simStatus)
+            if (!fcmToken.isNullOrBlank()) put("fcm_token", fcmToken)
         })
     }
 
-    fun claim(): RemoteMessage? {
+    fun claim(): RemoteClaim? {
         val json = request("GET", "/devices/messages/claim", null)
         if (json.isNull("data")) return null
         val data = json.getJSONObject("data")
-        return RemoteMessage(data.getString("id"), data.getString("to"), data.getString("body"))
+        val message = RemoteMessage(data.getString("id"), data.getString("to"), data.getString("body"))
+        val sendAuthorizationRequired = data.optBoolean("send_authorization_required", false)
+        return RemoteClaim(message, sendAuthorizationRequired)
+    }
+
+    fun sendAuthorization(messageId: String): SendAuthorizationResult? {
+        return try {
+            val json = request("POST", "/devices/messages/${encodePathSegment(messageId)}/send-authorization", JSONObject())
+            val data = json.getJSONObject("data")
+            SendAuthorizationResult(send = data.getBoolean("send"), reason = data.getString("reason"))
+        } catch (exception: GatewayApiException) {
+            if (exception.httpStatus in 400..499) SendAuthorizationResult(send = false, reason = "rejected") else null
+        } catch (_: IOException) {
+            null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun acknowledge(messageId: String) {

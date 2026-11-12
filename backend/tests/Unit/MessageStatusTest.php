@@ -18,6 +18,7 @@ class MessageStatusTest extends TestCase
     {
         return [
             'queue to assignment' => [MessageStatus::Queued, MessageStatus::Assigned],
+            'queue to cancellation' => [MessageStatus::Queued, MessageStatus::Cancelled],
             'assignment to durable receipt' => [MessageStatus::Assigned, MessageStatus::AcceptedByDevice],
             'in progress to network handoff' => [MessageStatus::Sending, MessageStatus::SentToNetwork],
             'unknown can resolve from late evidence' => [MessageStatus::Unknown, MessageStatus::SentToNetwork],
@@ -31,6 +32,7 @@ class MessageStatusTest extends TestCase
         $this->assertTrue(MessageStatus::SendFailed->isTerminal());
         $this->assertTrue(MessageStatus::DeliveryReported->isTerminal());
         $this->assertTrue(MessageStatus::DeliveryFailed->isTerminal());
+        $this->assertTrue(MessageStatus::Cancelled->isTerminal());
     }
 
     public function test_terminal_states_cannot_transition_automatically(): void

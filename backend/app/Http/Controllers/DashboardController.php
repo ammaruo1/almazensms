@@ -11,6 +11,8 @@ use App\Models\OtpChallenge;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\AuditLogger;
+use App\Services\CustomerGuideWorkbook;
+use App\Services\MessageIntake;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -32,7 +34,7 @@ class DashboardController extends Controller
             'deviceCount' => Device::query()->whereNull('revoked_at')->count(),
             'queuedCount' => $counts[MessageStatus::Queued->value] ?? 0,
             'unknownCount' => $counts[MessageStatus::Unknown->value] ?? 0,
-            'latestMessages' => Message::query()->with('project:id,name')->latest()->limit(8)->get(['id', 'project_id', 'status', 'queued_at', 'completed_at']),
+            'latestMessages' => Message::query()->with(['project:id,name', 'device:id,name'])->latest()->limit(8)->get(['id', 'project_id', 'device_id', 'destination_mask', 'status', 'queued_at', 'completed_at']),
             'outboxPending' => DB::table('outbox_events')->whereNull('processed_at')->count(),
         ]);
     }
@@ -128,9 +130,17 @@ class DashboardController extends Controller
         return back()->with('status', 'تم إلغاء الجهاز.');
     }
 
-    public function keys(): View
+    public function keys(Request $request): View
     {
+        $filters = $request->validate([
+            'q' => ['nullable', 'string', 'max:80'],
+            'project_id' => ['nullable', 'integer', 'exists:projects,id'],
+            'status' => ['nullable', 'in:active,revoked'],
+        ]);
         $today = now('UTC')->toDateString();
+        $search = isset($filters['q']) && $filters['q'] !== ''
+            ? '%'.str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $filters['q']).'%'
+            : null;
 
         return view('dashboard.keys', [
             'keys' => ApiKey::query()
@@ -139,9 +149,25 @@ class DashboardController extends Controller
                     'project.dailyUsage' => fn ($query) => $query->whereDate('usage_date', $today),
                     'dailyUsage' => fn ($query) => $query->whereDate('usage_date', $today),
                 ])
+                ->when($search !== null, function ($query) use ($search): void {
+                    $query->where(function ($inner) use ($search): void {
+                        $inner->whereRaw('name like ? escape ?', [$search, '\\'])
+                            ->orWhereRaw('prefix like ? escape ?', [$search, '\\']);
+                    });
+                })
+                ->when($filters['project_id'] ?? null, fn ($query, $projectId) => $query->where('project_id', $projectId))
+                ->when(($filters['status'] ?? null) === 'active', fn ($query) => $query->whereNull('revoked_at'))
+                ->when(($filters['status'] ?? null) === 'revoked', fn ($query) => $query->whereNotNull('revoked_at'))
                 ->orderByDesc('created_at')
-                ->paginate(25),
+                ->paginate(25)
+                ->withQueryString(),
             'projects' => Project::query()->where('status', 'active')->orderBy('name')->get(['id', 'name', 'daily_message_limit']),
+            'filterProjects' => Project::query()->orderBy('name')->get(['id', 'name']),
+            'filters' => [
+                'q' => $filters['q'] ?? '',
+                'project_id' => $filters['project_id'] ?? '',
+                'status' => $filters['status'] ?? '',
+            ],
             'today' => $today,
         ]);
     }
@@ -157,8 +183,7 @@ class DashboardController extends Controller
         $secret = 'azm_live_'.Str::random(48);
         $key = $project->apiKeys()->create([
             'name' => $data['name'],
-            'prefix' => substr($secret, 0, 24),
-            'key_hash' => hash('sha256', $secret),
+            ...ApiKey::protect($secret),
             'daily_message_limit' => $data['daily_message_limit'],
             'requests_per_minute' => $data['requests_per_minute'],
         ]);
@@ -169,17 +194,58 @@ class DashboardController extends Controller
             'requests_per_minute' => $key->requests_per_minute,
         ]);
 
-        return $this->credentialResponse($secret, 'مفتاح API', 'انسخ المفتاح الآن؛ لا يمكن استعادته بعد مغادرة هذه الصفحة.');
+        return $this->credentialResponse(
+            $secret,
+            'مفتاح API',
+            'انسخ المفتاح الآن. يمكن للمدير كشفه لاحقاً من صفحة المفاتيح.',
+            warning: 'المفتاح محفوظ مشفّراً. لا تشارك هذه الصفحة؛ انسخ المفتاح وأرسله للعميل ثم أغلقها.',
+        );
+    }
+
+    public function revealKey(Request $request, Project $project, ApiKey $apiKey, AuditLogger $audit): Response|RedirectResponse
+    {
+        abort_unless($apiKey->project_id === $project->id, 404);
+        $secret = $apiKey->plainSecret();
+        if ($secret === null) {
+            return back()->withErrors([
+                'secret' => 'لا يمكن استرجاع هذا المفتاح لأنه أُنشئ قبل حفظ النسخة المشفّرة. أنشئ مفتاحاً جديداً.',
+            ]);
+        }
+
+        $audit->record($request->user()->id, $project->id, 'api_key.revealed', 'api_key', (string) $apiKey->id, [
+            'name' => $apiKey->name,
+            'prefix' => $apiKey->prefix,
+        ]);
+
+        return $this->credentialResponse(
+            $secret,
+            'مفتاح API',
+            $apiKey->revoked_at ? 'هذا المفتاح ملغى ولن يقبل الطلبات.' : 'يمكن للمدير فتح هذه الصفحة مرة أخرى من بطاقة المفتاح.',
+            200,
+            'كشف مفتاح API',
+            'لا ترسل هذه الصفحة كما هي. انسخ المفتاح وأرسله للعميل في قناة تثق بها، ثم أغلق الصفحة.',
+        );
+    }
+
+    public function customerGuide(CustomerGuideWorkbook $guide): Response
+    {
+        return response($guide->binary(), 200, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition' => 'attachment; filename="almazensms-customer-guide.xlsx"',
+            'Cache-Control' => 'private, no-store',
+        ]);
     }
 
     public function updateKeyQuota(Request $request, Project $project, ApiKey $apiKey, AuditLogger $audit): RedirectResponse
     {
         abort_unless($apiKey->project_id === $project->id, 404);
         $data = $request->validate([
+            'name' => ['required', 'string', 'max:80'],
             'daily_message_limit' => ['required', 'integer', 'min:1', 'max:1000'],
             'requests_per_minute' => ['required', 'integer', 'min:1', 'max:120'],
         ]);
         $before = [
+            'name' => $apiKey->name,
             'daily_message_limit' => (int) $apiKey->daily_message_limit,
             'requests_per_minute' => (int) $apiKey->requests_per_minute,
         ];
@@ -188,12 +254,13 @@ class DashboardController extends Controller
             'api_key_id' => $apiKey->id,
             'before' => $before,
             'after' => [
+                'name' => $data['name'],
                 'daily_message_limit' => (int) $data['daily_message_limit'],
                 'requests_per_minute' => (int) $data['requests_per_minute'],
             ],
         ]);
 
-        return back()->with('status', 'تم تحديث حصة مفتاح API.');
+        return back()->with('status', 'تم تحديث مفتاح API.');
     }
 
     public function revokeKey(Request $request, Project $project, ApiKey $apiKey, AuditLogger $audit): RedirectResponse
@@ -213,13 +280,47 @@ class DashboardController extends Controller
             'status' => ['nullable', 'in:'.implode(',', $statuses)],
             'project_id' => ['nullable', 'integer', 'exists:projects,id'],
         ]);
-        $messages = Message::query()->with('project:id,name')
+        $messages = Message::query()->with(['project:id,name', 'device:id,name'])
             ->when($filters['q'] ?? null, fn ($query, $id) => $query->where('id', 'like', '%'.$id.'%'))
             ->when($filters['status'] ?? null, fn ($query, $status) => $query->where('status', $status))
             ->when($filters['project_id'] ?? null, fn ($query, $projectId) => $query->where('project_id', $projectId))
             ->latest()->paginate(25)->withQueryString();
 
-        return view('dashboard.messages', ['messages' => $messages, 'projects' => Project::query()->orderBy('name')->get(['id', 'name']), 'statuses' => $statuses]);
+        return view('dashboard.messages', ['messages' => $messages, 'projects' => Project::query()->orderBy('name')->get(['id', 'name', 'status']), 'statuses' => $statuses]);
+    }
+
+    public function sendTestMessage(Request $request, MessageIntake $intake, AuditLogger $audit): RedirectResponse
+    {
+        $data = $request->validate([
+            'project_id' => ['required', 'integer', 'exists:projects,id'],
+            'destination' => ['required', 'string', 'regex:/^\\+[1-9][0-9]{7,14}$/'],
+            'confirm_recipient' => ['accepted'],
+        ]);
+
+        $project = Project::query()->findOrFail($data['project_id']);
+        abort_unless($project->status === 'active', 422, 'المشروع متوقف.');
+        $apiKey = $project->apiKeys()->whereNull('revoked_at')->orderBy('id')->first();
+        abort_unless($apiKey instanceof ApiKey, 422, 'أنشئ مفتاح API فعالاً للمشروع أولاً.');
+
+        $body = 'رسالة اختبار من ALMAZEN SMS.';
+        $idempotencyKey = 'admin-test:'.$request->user()->id.':'.Str::uuid();
+        $payloadHash = hash_hmac('sha256', json_encode([$data['destination'], $body], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), (string) config('app.key'));
+        [$message] = $intake->accept(
+            $project,
+            (int) $apiKey->id,
+            $idempotencyKey,
+            $data['destination'],
+            $body,
+            $payloadHash,
+        );
+
+        $audit->record($request->user()->id, $project->id, 'admin.test_sms.queued', 'message', (string) $message->id, [
+            'destination_encrypted' => encrypt($message->destination),
+            'body_encrypted' => encrypt($message->body),
+            'message_id' => $message->id,
+        ]);
+
+        return back()->with('status', 'قُبلت رسالة الاختبار وأضيفت إلى الطابور. المعرّف: '.$message->id.' — راقب حالة الرسالة في الجدول أدناه.');
     }
 
     public function usage(): View
@@ -385,9 +486,9 @@ class DashboardController extends Controller
         }
     }
 
-    private function credentialResponse(string $credential, string $title, string $notice): Response
+    private function credentialResponse(string $credential, string $title, string $notice, int $status = 201, ?string $heading = null, ?string $warning = null): Response
     {
-        return response()->view('dashboard.credential', compact('credential', 'title', 'notice'), 201)
+        return response()->view('dashboard.credential', compact('credential', 'title', 'notice', 'heading', 'warning'), $status)
             ->header('Cache-Control', 'no-store, private')
             ->header('Pragma', 'no-cache')
             ->header('Referrer-Policy', 'no-referrer')

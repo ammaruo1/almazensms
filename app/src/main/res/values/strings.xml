@@ -1,3 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ALMAZEN SMS</string>
+    <string name="gateway_alert_channel_name">تنبيهات البوابة</string>
+    <string name="gateway_alert_channel_description">إشعارات طلبات الرسائل وتغيّر حالة بوابة الإرسال</string>
+    <string name="gateway_incoming_request_title">طلب رسالة جديد</string>
+    <string name="gateway_incoming_request_body">يعالج الهاتف طلباً من الخادم. لا يظهر رقم المستلم أو رمز OTP في الإشعار.</string>
+    <string name="gateway_attention_title">بوابة ALMAZEN تحتاج انتباهاً</string>
+    <string name="gateway_attention_body">تعذر الاتصال أو أصبحت إحدى متطلبات الإرسال غير متاحة. افتح التطبيق لمعرفة الحالة.</string>
+    <string name="gateway_attention_internet">انقطع اتصال الإنترنت. افحص الشبكة؛ ستعاود البوابة المحاولة تلقائياً.</string>
+    <string name="gateway_attention_credentials">رفض الخادم اعتماد الجهاز. افتح التطبيق وراجع إعدادات البوابة.</string>
+    <string name="gateway_attention_permission">صلاحية مطلوبة غير متاحة. افتح التطبيق وراجع صلاحيات البوابة.</string>
+    <string name="gateway_attention_sim">الشريحة المختارة غير جاهزة أو تعذرت قراءتها. افحص SIM المختارة من التطبيق.</string>
+    <string name="gateway_attention_cellular">الخدمة الخلوية غير مؤكدة أو غير متاحة. افحص تغطية المشغل والشريحة.</string>
+    <string name="gateway_attention_server">تعذر الوصول إلى خادم ALMAZEN. ستعاود البوابة المحاولة عند توفر الاتصال.</string>
+    <string name="gateway_recovered_title">بوابة ALMAZEN عادت للاتصال</string>
+    <string name="gateway_recovered_body">استعاد الهاتف الاتصال بالخادم. الطلبات المنتهية لا يعاد إرسالها.</string>
 </resources>
