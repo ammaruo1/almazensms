@@ -123,7 +123,7 @@ class GatewaySyncEngine(private val appContext: Context) {
                 GatewayWorkScheduler.disable(appContext)
                 GatewaySyncRunOutcome.FAILURE
             } else {
-                recordSyncState("backend_error")
+                recordSyncState("backend_error_${exception.httpStatus}")
                 GatewaySyncRunOutcome.RETRY
             }
         } catch (_: IOException) {
@@ -227,8 +227,15 @@ class GatewaySyncEngine(private val appContext: Context) {
     private fun uploadPendingReports(api: GatewayApiClient, store: SmsAttemptStore) {
         store.pendingRemoteCommands().forEach { command ->
             val status = command.pendingReportStatus ?: return@forEach
-            api.report(command.id, status, detailCode = "android_result")
-            store.markRemoteReported(command.id, status)
+            try {
+                api.report(command.id, status, detailCode = "android_result")
+                store.markRemoteReported(command.id, status)
+            } catch (exception: GatewayApiException) {
+                // Stale local rows must not block new claims behind a permanent backend_error loop.
+                if (exception.httpStatus in STALE_REPORT_HTTP_CODES) {
+                    store.markRemoteReported(command.id, status)
+                }
+            }
         }
     }
 
@@ -297,5 +304,6 @@ class GatewaySyncEngine(private val appContext: Context) {
     companion object {
         private const val CALLBACK_TIMEOUT_MS = 2 * 60 * 1000L
         private const val MIN_REMOTE_SEND_INTERVAL_MS = 5 * 1000L
+        private val STALE_REPORT_HTTP_CODES = setOf(404, 409, 410, 422)
     }
 }
