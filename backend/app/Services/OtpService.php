@@ -135,6 +135,17 @@ class OtpService
                 ->first();
 
             if (! $challenge instanceof OtpChallenge) {
+                $latest = OtpChallenge::query()
+                    ->where('project_id', $lockedProject->id)
+                    ->where('phone_hash', OtpChallenge::hashPhone($destination))
+                    ->where('purpose', $purpose)
+                    ->orderByDesc('created_at')
+                    ->first();
+
+                if ($latest instanceof OtpChallenge && $latest->status === 'superseded') {
+                    return ['verified' => false, 'status' => 'superseded'];
+                }
+
                 return ['verified' => false, 'status' => 'invalid'];
             }
 

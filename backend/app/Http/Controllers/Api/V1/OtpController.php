@@ -49,10 +49,12 @@ class OtpController extends Controller
         $project = $request->attributes->get('apiProject');
         $data = $request->validate([
             'to' => ['required', 'string', 'regex:/^\+[1-9][0-9]{7,14}$/'],
-            'code' => ['required', 'string', 'regex:/^[0-9]{6}$/'],
+            'code' => ['required', 'string', 'regex:/^[0-9]{1,12}$/'],
             'purpose' => ['sometimes', 'string', 'regex:/^[A-Za-z0-9_.:-]{1,32}$/'],
         ]);
-        $result = $otp->verify($project, $data['to'], $data['code'], $data['purpose'] ?? 'login');
+        $code = preg_replace('/\D+/', '', (string) $data['code']);
+        abort_unless(strlen($code) === 6, 422, 'OTP code must be 6 digits.');
+        $result = $otp->verify($project, $data['to'], $code, $data['purpose'] ?? 'login');
 
         return response()->json(['data' => $result], $result['verified'] ? 200 : 422);
     }
