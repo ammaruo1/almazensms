@@ -354,7 +354,7 @@ class DashboardController extends Controller
     {
         $data = $request->validate([
             'otp_enabled' => ['required', 'boolean'],
-            'otp_ttl_seconds' => ['required', 'integer', 'min:60', 'max:1800'],
+            'otp_ttl_seconds' => ['required', 'integer', 'min:60', 'max:86400'],
             'otp_max_attempts' => ['required', 'integer', 'min:1', 'max:10'],
             'otp_resend_cooldown_seconds' => ['required', 'integer', 'min:15', 'max:3600'],
         ]);

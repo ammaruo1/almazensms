@@ -13,7 +13,7 @@
                     @csrf @method('PATCH')
                     <input type="hidden" name="otp_enabled" value="0">
                     <label class="flex items-center gap-2 text-sm font-medium sm:col-span-2 lg:col-span-1"><input type="checkbox" name="otp_enabled" value="1" @checked($project->otp_enabled)> تفعيل OTP</label>
-                    <label class="text-xs font-medium text-slate-600">الصلاحية بالثواني<input name="otp_ttl_seconds" type="number" min="60" max="1800" value="{{ $project->otp_ttl_seconds }}" required class="form-control"></label>
+                    <label class="text-xs font-medium text-slate-600">الصلاحية بالثواني (86400 = 24 ساعة)<input name="otp_ttl_seconds" type="number" min="60" max="86400" value="{{ $project->otp_ttl_seconds }}" required class="form-control"></label>
                     <label class="text-xs font-medium text-slate-600">حد المحاولات<input name="otp_max_attempts" type="number" min="1" max="10" value="{{ $project->otp_max_attempts }}" required class="form-control"></label>
                     <label class="text-xs font-medium text-slate-600">مهلة إعادة الإرسال<input name="otp_resend_cooldown_seconds" type="number" min="15" max="3600" value="{{ $project->otp_resend_cooldown_seconds }}" required class="form-control"></label>
                     <button class="button-secondary self-end">حفظ إعدادات OTP</button>
